@@ -49,6 +49,43 @@ bash build.sh
 ./rtsp_pusher -b 4000 -t udp --no-realtime
 ```
 
+### 启动 RTSP 服务器（mediamtx）
+
+推流前需要先启动一个 RTSP 服务器接收推流，这里以轻量服务器 [mediamtx](https://github.com/bluenviron/mediamtx)（原 rtsp-simple-server）为例。
+
+**方式一：Docker（推荐）**
+
+```bash
+docker run --rm -d \
+  -p 8554:8554 -p 1935:1935 -p 8888:8888 \
+  bluenviron/mediamtx:latest
+```
+
+- `8554`：RTSP 服务端口（与默认推流地址 `rtsp://127.0.0.1:8554/...` 对应）
+- `1935`：RTMP 端口（可选）
+- `8888`：Web 控制台 / API 端口（可选）
+
+**方式二：直接运行二进制**
+
+从 [mediamtx releases](https://github.com/bluenviron/mediamtx/releases) 下载对应平台的压缩包：
+
+```bash
+tar -xzf mediamtx_*.tar.gz
+./mediamtx
+```
+
+mediamtx 默认允许向任意路径推流，无需预先创建 `path`。服务器启动后直接运行本推流工具即可：
+
+```bash
+./rtsp_pusher -u rtsp://127.0.0.1:8554/live3
+```
+
+验证是否推流成功（另开一个终端播放）：
+
+```bash
+ffplay -fflags nobuffer -flags low_delay -framedrop rtsp://127.0.0.1:8554/live3
+```
+
 ### 命令行参数
 
 | 参数 | 说明 | 默认值 |
