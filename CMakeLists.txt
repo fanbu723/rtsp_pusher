@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.10)
 project(RTSP_Pusher)
 
 set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 可执行文件直接输出到项目根目录
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # 使用 pkg-config 查找 FFmpeg
 find_package(PkgConfig REQUIRED)
@@ -20,7 +24,7 @@ include_directories(${FFMPEG_INCLUDE_DIRS}
 )
 
 # 可执行文件
-add_executable(rtsp_pusher rtsp_pusher.cpp)
+add_executable(rtsp_pusher src/rtsp_pusher.cpp)
 
 # 链接库
 target_link_libraries(rtsp_pusher

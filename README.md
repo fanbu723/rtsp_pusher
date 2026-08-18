@@ -33,6 +33,21 @@ bash build.sh
 
 生成的可执行文件为 `./rtsp_pusher`。
 
+## 项目结构
+
+```text
+push_rtsp/
+├── src/
+│   └── rtsp_pusher.cpp      # 主程序源码
+├── include/
+│   └── cxxopts.hpp          # 命令行解析库（单头文件，第三方）
+├── CMakeLists.txt           # CMake 构建配置
+├── build.sh                 # 一键构建脚本
+├── build/                   # 构建产物（不纳入版本管理）
+├── README.md
+└── .gitignore
+```
+
 ## 使用
 
 ```bash
