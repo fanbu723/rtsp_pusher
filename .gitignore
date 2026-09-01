@@ -11,3 +11,10 @@ rtsp_pusher
 *.ts
 *.flv
 *.mkv
+
+# mediamtx 运行时产物（二进制/证书/压缩包，勿提交）
+mediamtx
+mediamtx_*.tar.gz
+mediamtx.yml
+auto.crt
+auto.key

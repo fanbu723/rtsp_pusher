@@ -1,4 +1,6 @@
+#!/bin/bash
+set -e
+
 rm -rf build
-mkdir build && cd build
-cmake ..
-make
+cmake -B build -S .
+cmake --build build -j$(nproc)
