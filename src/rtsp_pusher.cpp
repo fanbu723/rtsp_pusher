@@ -140,6 +140,7 @@ static bool is_software_encoder(const char* name) {
         char errbuf[128]; \
         av_strerror(expr, errbuf, sizeof(errbuf)); \
         std::cerr << msg << ": " << errbuf << std::endl; \
+        failed = true; \
         goto fail; \
     }
 
@@ -165,6 +166,7 @@ int main(int argc, char* argv[]) {
     AVFrame* frame = nullptr;
     AVFrame* filtered_frame = nullptr;
     bool header_written = false;
+    bool failed = false;                 // 初始化/推流是否失败，决定退出码
     bool is_hw_enc = false;              // 是否硬件编码器（h264_ascend 等）
     AVCodecID out_codec_id = AV_CODEC_ID_H264;   // 输出编码协议，默认 H.264
     std::string scale_str, filter_desc;
@@ -278,6 +280,7 @@ int main(int argc, char* argv[]) {
     }
     if (video_stream_idx == -1) {
         std::cerr << "未找到视频流" << std::endl;
+        failed = true;
         goto fail;
     }
 
@@ -296,6 +299,7 @@ int main(int argc, char* argv[]) {
     dec = avcodec_find_decoder(in_codecpar->codec_id);
     if (!dec) {
         std::cerr << "找不到解码器" << std::endl;
+        failed = true;
         goto fail;
     }
     dec_ctx = avcodec_alloc_context3(dec);
@@ -315,6 +319,7 @@ int main(int argc, char* argv[]) {
     out_stream = avformat_new_stream(ofmt_ctx, nullptr);
     if (!out_stream) {
         std::cerr << "创建输出流失败" << std::endl;
+        failed = true;
         goto fail;
     }
     out_stream->id = 0;
@@ -325,6 +330,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "找不到 " << codec_display_name(out_codec_id)
                   << " 编码器（请确认 FFmpeg 已编译 libx265 或对应硬件编码器）"
                   << std::endl;
+        failed = true;
         goto fail;
     }
     enc_ctx = avcodec_alloc_context3(enc);
@@ -502,8 +508,6 @@ int main(int argc, char* argv[]) {
     avfilter_inout_free(&outputs);
 
     // ---------- 4. 打开输出并写头 ----------
-    // CHECK_ERR(avio_open(&ofmt_ctx->pb, output_url, AVIO_FLAG_WRITE),
-    //           "无法打开输出 URL");
     std::cout << "正在连接 RTSP 服务器: " << output_url << " ..." << std::endl;
     CHECK_ERR(avformat_write_header(ofmt_ctx, &options), "写头失败");
     header_written = true;
@@ -522,8 +526,12 @@ int main(int argc, char* argv[]) {
     while (keep_running) {
         // 读取帧
         if (av_read_frame(ifmt_ctx, pkt) < 0) {
-            // 循环播放：seek 到开头
-            av_seek_frame(ifmt_ctx, -1, 0, AVSEEK_FLAG_BACKWARD);
+            // 循环播放：seek 到开头；seek 失败说明输入不可循环，直接退出避免空转
+            if (av_seek_frame(ifmt_ctx, -1, 0, AVSEEK_FLAG_BACKWARD) < 0) {
+                std::cerr << "循环播放 seek 失败" << std::endl;
+                failed = true;
+                break;
+            }
             loop_count++;
             continue;
         }
@@ -667,6 +675,6 @@ fail:
     avfilter_inout_free(&outputs);
     avformat_network_deinit();
 
-    std::cout << "推流结束。" << std::endl;
-    return 0;
+    std::cout << (failed ? "推流失败。" : "推流结束。") << std::endl;
+    return failed ? 1 : 0;
 }

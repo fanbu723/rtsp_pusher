@@ -141,5 +141,6 @@ ffplay -fflags nobuffer -flags low_delay -framedrop rtsp://127.0.0.1:8554/live3
 - H.265 需要服务端与播放器支持（mediamtx 已支持）；可用 `ffprobe -rtsp_transport tcp -show_streams <rtsp-url>` 确认 `codec_name=hevc`
 - H.265 软件编码（libx265）的 CPU 开销高于 H.264；高分辨率推流建议用 `-b` 限制码率、降低输出分辨率，或使用硬件 HEVC 编码器
 - 输入文件 PTS 异常（如起始时间戳非 0）时，程序按目标帧率统一重排时间戳，保证 RTSP 时间轴稳定
+- 正常退出（Ctrl+C）返回 0；初始化或推流失败返回非零退出码，便于脚本/守护进程判断
 - 默认只显示 ERROR 级别 FFmpeg 日志，`-v` 可查看完整日志
 - `build/` 目录与生成的可执行文件不纳入版本管理（见 `.gitignore`）
