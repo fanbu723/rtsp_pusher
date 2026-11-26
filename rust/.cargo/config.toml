@@ -1,0 +1,4 @@
+# 让 cargo（包括 rust-analyzer / IDE 的 cargo check）自动找到 FFmpeg 6.1 sysroot，
+# 与 scripts/ffmpeg-env.sh 生成的目录保持一致。relative 相对 rust/.cargo 的父目录解析。
+[env]
+FFMPEG_DIR = { value = "../.ffmpeg-sysroot", relative = true }
