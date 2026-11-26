@@ -391,8 +391,14 @@ int main(int argc, char* argv[]) {
         enc_ctx->rc_max_rate = low_latency ? enc_ctx->bit_rate * 2 : enc_ctx->bit_rate;
         enc_ctx->rc_buffer_size = low_latency ? enc_ctx->bit_rate / 4 : enc_ctx->bit_rate;
     }
-    av_opt_set(enc_ctx, "preset", "ultrafast", 0);
-    av_opt_set(enc_ctx, "tune", "zerolatency", 0);
+    // preset/tune/gop 等属于编码器私有 AVClass，必须带 AV_OPT_SEARCH_CHILDREN
+    // 查找，否则选项会静默失效、编码器回退到默认配置
+    av_opt_set(enc_ctx, "preset", "ultrafast", AV_OPT_SEARCH_CHILDREN);
+    av_opt_set(enc_ctx, "tune", "zerolatency", AV_OPT_SEARCH_CHILDREN);
+    // libx265 的 info 日志会打断每秒状态行；默认只保留错误，-v 时保留完整日志
+    if (!verbose && strcmp(enc->name, "libx265") == 0) {
+        av_opt_set(enc_ctx, "x265-params", "log-level=error", AV_OPT_SEARCH_CHILDREN);
+    }
 
     // Ascend 硬件插件专属参数（其他硬件编码器会忽略未知选项）：
     // 从 ffmpeg -h encoder=h264_ascend 得知：插件默认 gop=30（≈1.3s@23fps）、
@@ -400,19 +406,19 @@ int main(int argc, char* argv[]) {
     // 这里显式设置，避免插件用默认大 GOP 导致的高延迟。
     if (is_hw_enc) {
         // GOP：低延迟 10，否则 30（与插件默认一致）
-        av_opt_set_int(enc_ctx, "gop", low_latency ? 10 : 30, 0);
+        av_opt_set_int(enc_ctx, "gop", low_latency ? 10 : 30, AV_OPT_SEARCH_CHILDREN);
         // 码控：0=CBR（直播推荐，码率平稳）
-        av_opt_set_int(enc_ctx, "rc_mode", 0, 0);
+        av_opt_set_int(enc_ctx, "rc_mode", 0, AV_OPT_SEARCH_CHILDREN);
         // CBR 平均码率 = 我们设置的 bit_rate（kbps），避免插件默认 20Mbps
         int64_t br_kbps = enc_ctx->bit_rate / 1000;
         if (br_kbps < 2)       br_kbps = 2;
         if (br_kbps > 614400)  br_kbps = 614400;
-        av_opt_set_int(enc_ctx, "max_bit_rate", (int)br_kbps, 0);
+        av_opt_set_int(enc_ctx, "max_bit_rate", (int)br_kbps, AV_OPT_SEARCH_CHILDREN);
         // 帧率与输入一致，避免插件默认 25 与输入 23 错位
         int fr = src_fps.den ? src_fps.num / src_fps.den : 25;
         if (fr < 1)   fr = 1;
         if (fr > 240) fr = 240;
-        av_opt_set_int(enc_ctx, "frame_rate", fr, 0);
+        av_opt_set_int(enc_ctx, "frame_rate", fr, AV_OPT_SEARCH_CHILDREN);
         if (verbose) {
             std::cout << enc->name << ": gop=" << (low_latency ? 10 : 30)
                       << " rc_mode=CBR bitrate=" << br_kbps
