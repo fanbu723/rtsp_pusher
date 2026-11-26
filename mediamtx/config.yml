@@ -1,0 +1,15 @@
+# docker-compose 使用的 mediamtx 配置：只启用 RTSP，任意路径可推流
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: true
+rtspAddress: :8554
+
+rtmp: false
+hls: false
+webrtc: false
+srt: false
+moq: false
+
+paths:
+  all_others:

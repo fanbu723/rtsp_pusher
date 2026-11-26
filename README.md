@@ -44,6 +44,9 @@ rtsp_pusher/
 │   └── cxxopts.hpp          # 命令行解析库（单头文件，第三方）
 ├── CMakeLists.txt           # CMake 构建配置
 ├── build.sh                 # 一键构建脚本
+├── docker-compose.yml       # 容器编排（rtsp_pusher + mediamtx）
+├── mediamtx/
+│   └── config.yml           # mediamtx 容器配置
 ├── build/                   # 构建产物（不纳入版本管理）
 ├── README.md
 └── .gitignore
@@ -74,6 +77,14 @@ rtsp_pusher/
 ### 启动 RTSP 服务器（mediamtx）
 
 推流前需要先启动一个 RTSP 服务器接收推流，这里以轻量服务器 [mediamtx](https://github.com/bluenviron/mediamtx)（原 rtsp-simple-server）为例。
+
+仓库自带的 `docker-compose.yml` 已定义 mediamtx 服务（配置见 `mediamtx/config.yml`，仅启用 RTSP 且允许任意路径推流）：
+
+```bash
+docker compose up -d
+```
+
+该命令会同时启动 rtsp_pusher 与 mediamtx，两者共用主机网络，推流地址仍为 `rtsp://127.0.0.1:8554/<path>`。首次执行会拉取 `bluenviron/mediamtx:1.20.0` 镜像；此时无需再单独执行下面的 docker run。
 
 **方式一：Docker（推荐）**
 

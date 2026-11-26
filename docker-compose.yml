@@ -1,0 +1,31 @@
+services:
+  rtsp_pusher:
+    image: nofar-ai-box:py12-trt10-cu128-20261030
+    container_name: rtsp_pusher
+    restart: unless-stopped   # 非手动停止时自动重启容器，配合 restart_program 托管退出
+    network_mode: host                 # 使用主机网络模式
+    working_dir: /home/dongfan/project/rtsp_pusher
+    cap_add:
+      - SYS_TIME          # 允许容器内 date -s 校时（修改的是宿主机时钟）
+    volumes:
+      - /data:/data
+      - /home:/home
+      - /home/dongfan/project/nfr-alg-rt/3rdlibs/x86/ffmpeg61_x86_u22.04:/app/ffmpeg
+      - /home/dongfan/project/nfr-alg-rt/api/libs/nvidia/4090-trt10-py12:/app/libs
+    runtime: nvidia
+    environment:
+      - TZ=Asia/Shanghai
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+    command: tail -f /dev/null
+
+  mediamtx:
+    image: bluenviron/mediamtx:1.20.0
+    container_name: mediamtx
+    restart: unless-stopped
+    network_mode: host                 # 与 rtsp_pusher 共用主机网络，127.0.0.1:8554 可直接访问
+    volumes:
+      - ./mediamtx/config.yml:/mediamtx.yml:ro
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro   # 镜像为 scratch，挂载时区数据使 TZ 生效
+    environment:
+      - TZ=Asia/Shanghai

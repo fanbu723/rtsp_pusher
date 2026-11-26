@@ -17,9 +17,10 @@ rtsp_pusher
 videos/
 .agents/
 
-# mediamtx 运行时产物（二进制/证书/压缩包，勿提交）
-mediamtx
+# mediamtx 运行时产物（二进制/证书/压缩包，勿提交；容器配置见 mediamtx/config.yml）
+/mediamtx/mediamtx
 mediamtx_*.tar.gz
 mediamtx.yml
+/mediamtx/LICENSE
 auto.crt
 auto.key
