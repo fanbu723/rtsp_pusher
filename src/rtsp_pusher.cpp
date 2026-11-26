@@ -17,6 +17,7 @@ extern "C" {
 #include <cstdlib>
 #include <csignal>
 #include <cstring>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include "cxxopts.hpp"
@@ -112,6 +113,27 @@ static void draw_timestamp(AVFrame* frame, const char* text, int scale) {
     }
 }
 
+// 输出编码协议：h264（默认）/ h265，大小写不敏感
+static AVCodecID parse_output_codec(const std::string& name) {
+    std::string lower;
+    lower.reserve(name.size());
+    for (size_t i = 0; i < name.size(); i++) {
+        lower.push_back((char)std::tolower((unsigned char)name[i]));
+    }
+    if (lower == "h264") return AV_CODEC_ID_H264;
+    if (lower == "h265") return AV_CODEC_ID_HEVC;
+    return AV_CODEC_ID_NONE;
+}
+
+static const char* codec_display_name(AVCodecID id) {
+    return id == AV_CODEC_ID_HEVC ? "H.265 (HEVC)" : "H.264 (AVC)";
+}
+
+// 只有这两个是软件编码器；libx265 不能被当成硬件编码器走默认码率分支
+static bool is_software_encoder(const char* name) {
+    return name && (strcmp(name, "libx264") == 0 || strcmp(name, "libx265") == 0);
+}
+
 // 错误检查宏
 #define CHECK_ERR(expr, msg) \
     if ((expr) < 0) { \
@@ -144,6 +166,7 @@ int main(int argc, char* argv[]) {
     AVFrame* filtered_frame = nullptr;
     bool header_written = false;
     bool is_hw_enc = false;              // 是否硬件编码器（h264_ascend 等）
+    AVCodecID out_codec_id = AV_CODEC_ID_H264;   // 输出编码协议，默认 H.264
     std::string scale_str, filter_desc;
     // 以下变量会被 goto fail 跨过，必须提前声明并初始化
     int video_stream_idx = -1;
@@ -169,7 +192,7 @@ int main(int argc, char* argv[]) {
     int64_t last_log_frames = 0;       // 上次刷新日志时的帧数
 
     // ---------- 0. 解析命令行参数 ----------
-    cxxopts::Options opts("rtsp_pusher", "FFmpeg RTSP 推流工具（H.264，支持时间戳水印）");
+    cxxopts::Options opts("rtsp_pusher", "FFmpeg RTSP 推流工具（H.264/H.265，支持时间戳水印）");
     opts.add_options()
         ("i,input", "输入视频文件", cxxopts::value<std::string>()->default_value("o2.mp4"))
         ("u,url", "RTSP 输出地址", cxxopts::value<std::string>()->default_value("rtsp://127.0.0.1:8554/live3"))
@@ -178,13 +201,14 @@ int main(int argc, char* argv[]) {
         ("f,fps", "目标帧率（0 表示自动使用输入帧率）", cxxopts::value<int>()->default_value("0"))
         ("t,transport", "RTSP 传输协议（tcp/udp）", cxxopts::value<std::string>()->default_value("tcp"))
         ("b,bitrate", "编码码率 kbps（0 表示 CRF 自动）", cxxopts::value<int>()->default_value("0"))
+        ("c,codec", "输出视频编码协议（h264/h265，默认 h264）", cxxopts::value<std::string>()->default_value("h264"))
         ("no-realtime", "关闭实时速度控制（默认按实时速度推流）", cxxopts::value<bool>()->default_value("false"))
         ("no-watermark", "关闭实时时间戳水印（默认开启）", cxxopts::value<bool>()->default_value("false"))
         ("low-latency", "低延迟模式：减小 GOP 与编码缓冲，降低端到端延迟", cxxopts::value<bool>()->default_value("false"))
         ("v,verbose", "显示详细日志（默认只显示错误）", cxxopts::value<bool>()->default_value("false"))
         ("h,help", "显示帮助", cxxopts::value<bool>()->default_value("false"));
 
-    std::string input_file, output_url, transport;
+    std::string input_file, output_url, transport, codec;
     int width = 2560, height = 1440;
     int fps_override = 0, bitrate_kbps = 0;
     bool no_realtime = false, verbose = false, low_latency = false;
@@ -203,6 +227,7 @@ int main(int argc, char* argv[]) {
         fps_override = result["fps"].as<int>();
         transport = result["transport"].as<std::string>();
         bitrate_kbps = result["bitrate"].as<int>();
+        codec = result["codec"].as<std::string>();
         no_realtime = result["no-realtime"].as<bool>();
         no_watermark = result["no-watermark"].as<bool>();
         low_latency = result["low-latency"].as<bool>();
@@ -210,6 +235,13 @@ int main(int argc, char* argv[]) {
     } catch (const cxxopts::exceptions::exception& e) {
         std::cerr << "参数解析错误: " << e.what() << std::endl;
         std::cout << opts.help() << std::endl;
+        return 1;
+    }
+
+    out_codec_id = parse_output_codec(codec);
+    if (out_codec_id == AV_CODEC_ID_NONE) {
+        std::cerr << "不支持的编码协议: " << codec
+                  << "（可选值: h264 / h265）" << std::endl;
         return 1;
     }
 
@@ -224,6 +256,7 @@ int main(int argc, char* argv[]) {
     std::cout << "输入文件: " << input_file << std::endl;
     std::cout << "输出地址: " << output_url << std::endl;
     std::cout << "输出尺寸: " << width << "x" << height << std::endl;
+    std::cout << "编码协议: " << codec_display_name(out_codec_id) << std::endl;
     std::cout << "时间戳水印: " << (watermark ? "已启用" : "已关闭") << std::endl;
 
     // ---------- 1. 打开输入 ----------
@@ -269,7 +302,7 @@ int main(int argc, char* argv[]) {
     avcodec_parameters_to_context(dec_ctx, in_codecpar);
     CHECK_ERR(avcodec_open2(dec_ctx, dec, nullptr), "打开解码器失败");
 
-    // 兜底：若未探测到像素格式，默认按 YUV420P 处理（H.264 解码通常输出 4:2:0）
+    // 兜底：若未探测到像素格式，默认按 YUV420P 处理（视频解码通常输出 4:2:0）
     if (dec_ctx->pix_fmt == AV_PIX_FMT_NONE) {
         dec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
     }
@@ -286,11 +319,12 @@ int main(int argc, char* argv[]) {
     }
     out_stream->id = 0;
 
-    // 编码器配置（H.264，超低延迟）
-    // AV_CODEC_ID_HEVC
-    enc = avcodec_find_encoder(AV_CODEC_ID_H264);
+    // 编码器配置（H.264/H.265，超低延迟）
+    enc = avcodec_find_encoder(out_codec_id);
     if (!enc) {
-        std::cerr << "找不到 H.264 编码器" << std::endl;
+        std::cerr << "找不到 " << codec_display_name(out_codec_id)
+                  << " 编码器（请确认 FFmpeg 已编译 libx265 或对应硬件编码器）"
+                  << std::endl;
         goto fail;
     }
     enc_ctx = avcodec_alloc_context3(enc);
@@ -326,10 +360,10 @@ int main(int argc, char* argv[]) {
 
     // 码率设置：
     // - 用户指定 -b 时用指定值
-    // - libx264 等软编未指定时走 CRF（bit_rate=0），画质优先
+    // - libx264 / libx265 等软编未指定时走 CRF（bit_rate=0），画质优先
     // - 硬件编码器（h264_ascend 等）未指定时给默认码率：该插件依赖 bit_rate
     //   分配内部输出缓冲，为 0 时缓冲过小，会出现 "Ascend memory D2H failed, ret 507899"
-    is_hw_enc = (strcmp(enc->name, "libx264") != 0);
+    is_hw_enc = !is_software_encoder(enc->name);
     if (bitrate_kbps > 0) {
         enc_ctx->bit_rate = (int64_t)bitrate_kbps * 1000;
     } else if (is_hw_enc) {
@@ -360,7 +394,7 @@ int main(int argc, char* argv[]) {
     av_opt_set(enc_ctx, "preset", "ultrafast", 0);
     av_opt_set(enc_ctx, "tune", "zerolatency", 0);
 
-    // h264_ascend 专属参数（软编会静默忽略）：
+    // Ascend 硬件插件专属参数（其他硬件编码器会忽略未知选项）：
     // 从 ffmpeg -h encoder=h264_ascend 得知：插件默认 gop=30（≈1.3s@23fps）、
     // frame_rate=25、max_bit_rate=20000kbps，且编码器自带 delay。
     // 这里显式设置，避免插件用默认大 GOP 导致的高延迟。
@@ -380,7 +414,7 @@ int main(int argc, char* argv[]) {
         if (fr > 240) fr = 240;
         av_opt_set_int(enc_ctx, "frame_rate", fr, 0);
         if (verbose) {
-            std::cout << "h264_ascend: gop=" << (low_latency ? 10 : 30)
+            std::cout << enc->name << ": gop=" << (low_latency ? 10 : 30)
                       << " rc_mode=CBR bitrate=" << br_kbps
                       << "kbps fps=" << fr << std::endl;
         }
