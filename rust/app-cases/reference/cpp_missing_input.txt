@@ -1,0 +1,8 @@
+输入文件: /nonexistent/rtsp-pusher.mp4
+输出地址: rtsp://127.0.0.1:8554/ref_missing
+输出尺寸: 2560x1440
+编码协议: H.264 (AVC)
+时间戳水印: 已启用
+无法打开输入文件: No such file or directory
+推流失败。
+exit=1

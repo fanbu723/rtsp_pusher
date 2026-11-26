@@ -1,6 +1,6 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# 一键构建：调用 Rust 构建脚本，产物为仓库根目录的 ./rtsp_pusher。
+set -euo pipefail
 
-rm -rf build
-cmake -B build -S .
-cmake --build build -j$(nproc)
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+exec bash "$ROOT/scripts/build-rust.sh"

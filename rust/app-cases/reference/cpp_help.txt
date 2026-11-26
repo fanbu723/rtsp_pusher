@@ -1,0 +1,24 @@
+FFmpeg RTSP 推流工具（H.264/H.265，支持时间戳水印）
+Usage:
+rtsp_pusher [OPTION...]
+
+  -i, --input arg      输入视频文件 (default: o2.mp4)
+  -u, --url arg        RTSP 输出地址 (default:
+                       rtsp://127.0.0.1:8554/live3)
+  -w, --width arg      输出宽度 (default: 2560)
+      --height arg     输出高度 (default: 1440)
+  -f, --fps arg        目标帧率（0 表示自动使用输入帧率）
+                       (default: 0)
+  -t, --transport arg  RTSP 传输协议（tcp/udp） (default: tcp)
+  -b, --bitrate arg    编码码率 kbps（0 表示 CRF 自动） (default:
+                       0)
+  -c, --codec arg      输出视频编码协议（h264/h265，默认 h264）
+                       (default: h264)
+      --no-realtime    关闭实时速度控制（默认按实时速度推�
+                       �）
+      --no-watermark   关闭实时时间戳水印（默认开启）
+      --low-latency    低延迟模式：减小 GOP
+                       与编码缓冲，降低端到端延迟
+  -v, --verbose        显示详细日志（默认只显示错误）
+  -h, --help           显示帮助
+

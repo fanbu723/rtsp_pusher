@@ -1,0 +1,2 @@
+# C++ 参考日志按原始字节保留，避免尾随空格/CR 被清理或换行被转换。
+rust/app-cases/reference/* -text -whitespace

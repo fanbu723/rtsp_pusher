@@ -1,0 +1,40 @@
+[package]
+name = "rtsp_pusher"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+publish = false
+description = "FFmpeg RTSP H.264/H.265 推流工具（Rust 实现）"
+
+[[bin]]
+name = "rtsp_pusher"
+path = "src/main.rs"
+
+[dependencies]
+ffmpeg-next = { version = "=6.1.1", default-features = false, features = [
+    "codec",
+    "filter",
+    "format",
+    "software-resampling",
+    "software-scaling",
+] }
+ffmpeg-sys-next = { version = "=6.1.0", default-features = false, features = [
+    "avcodec",
+    "avfilter",
+    "avformat",
+    "swresample",
+    "swscale",
+] }
+clap = { version = "4", default-features = false, features = [
+    "std",
+    "derive",
+    "help",
+    "usage",
+    "error-context",
+] }
+signal-hook = "0.3"
+libc = "0.2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"

@@ -1,29 +1,39 @@
 # rtsp_pusher — RTSP H.264/H.265 视频推流工具
 
-基于 FFmpeg 的 RTSP 推流程序：读取本地视频文件，解码后经滤镜链（缩放 + 格式转换）并直接绘制实时时间戳水印（含毫秒），重新编码为 H.264（默认）或 H.265（`--codec h265`）实时推送到 RTSP 服务器，并持续输出推流状态日志。
+基于 Rust + FFmpeg 的 RTSP 推流程序：读取本地视频文件，解码后经滤镜链（缩放 + 格式转换）并直接绘制实时时间戳水印（含毫秒），重新编码为 H.264（默认）或 H.265（`--codec h265`）实时推送到 RTSP 服务器，并持续输出推流状态日志。
+
+原 C++ 实现保留在 `main` 分支；本分支为行为等价的 Rust 重构，移植记录见 [`rust/HANDOFF.md`](rust/HANDOFF.md)。
 
 ## 功能特性
 
 - 读取 FFmpeg 支持的任意视频文件，重新编码为 H.264（默认）或 H.265 推送 RTSP（`--codec h265` 切换）
-- 自动叠加实时时间戳水印（内置点阵字体直接绘制，含毫秒；不依赖 drawtext 滤镜，任何 FFmpeg 均可使用），默认开启，可用 `--no-watermark` 关闭
+- 自动叠加实时时间戳水印（内置点阵字体直接绘制，含毫秒；不依赖 drawtext 滤镜），默认开启，可用 `--no-watermark` 关闭
 - 自动匹配输入帧率（可手动指定），避免长时间推流画面拖尾
 - 输入文件播放完毕后自动循环播放
 - 实时推流状态日志（已解码/已推流帧数、轮次、实时帧率、运行时长），每秒刷新
 - RTSP 握手/读写超时保护，避免服务器无响应时程序无限卡死
-- 命令行参数化（基于 cxxopts 单头文件库）
+- 命令行参数化（基于 clap）
 
 ## 依赖
 
-- FFmpeg 4.x 开发库：`libavcodec` / `libavformat` / `libavfilter` / `libavutil` / `libswscale` / `libswresample`
+- Rust 1.85+（clap 4.6 的最低要求，本项目在 1.100 上验证）
+- FFmpeg 6.1 开发库：`libavcodec` / `libavformat` / `libavfilter` / `libavutil` / `libswscale` / `libswresample`
 - H.265 软件编码需要 FFmpeg 启用 `libx265`；也可使用目标平台的硬件 HEVC 编码器（如 `hevc_nvenc` / Ascend HEVC 插件）
-- CMake >= 3.10
-- GCC（支持 C++11）
-- cxxopts（单头文件，已内置在 `include/` 中）
 
-Ubuntu 安装 FFmpeg 开发库：
+Ubuntu 24.04 安装 FFmpeg 6.1 开发库：
 
 ```bash
 apt install -y libavcodec-dev libavformat-dev libavfilter-dev libavutil-dev libswscale-dev libswresample-dev
+```
+
+Ubuntu 22.04 的 apt 默认是 FFmpeg 4.4，不能直接满足要求；请使用独立的 FFmpeg 6.1 prefix（或容器内 `/app/ffmpeg`），并按下述方式指定头文件。
+
+如果 FFmpeg 6.1 头文件不在 pkg-config 默认路径（例如使用独立 prefix），构建时指定：
+
+```bash
+export FFMPEG_INCLUDE_DIR=/path/to/ffmpeg-6.1/include
+# 可选：库目录与头文件不在同一 prefix 时
+export FFMPEG_LIB_DIR=/path/to/ffmpeg-6.1/lib
 ```
 
 ## 构建
@@ -34,20 +44,36 @@ bash build.sh
 
 生成的可执行文件为 `./rtsp_pusher`。
 
+`build.sh` 会调用 `scripts/ffmpeg-env.sh`，按以下顺序寻找 FFmpeg 6.1：`pkg-config` → `FFMPEG_INCLUDE_DIR` → 容器内 `/app/ffmpeg/include` → 运行中 `rtsp_pusher` 容器的 `/app/ffmpeg` 挂载源；必要时在 `.ffmpeg-sysroot/` 生成构建用 sysroot（不纳入版本管理）。
+
+二进制动态链接 FFmpeg 6.1 运行库（`libavcodec.so.60` 等）。在 `rtsp_pusher` 容器内运行时，`/app/ffmpeg/lib` 已在 `LD_LIBRARY_PATH` 中；宿主机则使用系统 FFmpeg 6.1。
+
 ## 项目结构
 
 ```text
 rtsp_pusher/
-├── src/
-│   └── rtsp_pusher.cpp      # 主程序源码
-├── include/
-│   └── cxxopts.hpp          # 命令行解析库（单头文件，第三方）
-├── CMakeLists.txt           # CMake 构建配置
-├── build.sh                 # 一键构建脚本
+├── rust/
+│   ├── src/
+│   │   ├── main.rs          # 入口、退出码
+│   │   ├── cli.rs           # 命令行参数
+│   │   ├── pipeline.rs      # 输入/解码/滤镜/水印/编码/RTSP 主循环
+│   │   ├── watermark.rs     # 5x7 点阵时间戳
+│   │   ├── settings.rs      # 编码器参数决策
+│   │   ├── pacing.rs        # 实时节奏
+│   │   ├── ffmpeg_ext.rs    # 少量 FFmpeg FFI 封装
+│   │   └── error.rs
+│   ├── tests/cli.rs         # CLI 契约测试
+│   ├── MAP.md / DECISIONS.md / HANDOFF.md / RULES.md
+│   └── app-cases/           # C++ 参考日志与用例矩阵
+├── scripts/
+│   ├── build-rust.sh        # cargo 构建 + 复制二进制
+│   ├── ffmpeg-env.sh        # FFmpeg 6.1 探测 / sysroot
+│   ├── test-rust.sh         # fmt / clippy / cargo test
+│   ├── e2e.sh               # 端到端验证
+│   └── record-reference.sh  # 录制 C++ 基线
+├── build.sh                 # 一键构建
 ├── docker-compose.yml       # 容器编排（rtsp_pusher + mediamtx）
-├── mediamtx/
-│   └── config.yml           # mediamtx 容器配置
-├── build/                   # 构建产物（不纳入版本管理）
+├── mediamtx/config.yml      # mediamtx 容器配置
 ├── README.md
 └── .gitignore
 ```
@@ -139,19 +165,31 @@ ffplay -fflags nobuffer -flags low_delay -framedrop rtsp://127.0.0.1:8554/live3
 
 ## 工作原理
 
-1. 打开输入文件并探测流信息，获取视频流与真实帧率（`av_guess_frame_rate`）
+1. 打开输入文件并探测流信息（`max_analyze_duration=5s`、`probesize=20MB`），获取视频流与真实帧率（`av_guess_frame_rate`）
 2. 创建 RTSP 输出上下文与编码器：默认 H.264，`--codec h265` 时使用 H.265/HEVC（`ultrafast` / `zerolatency` 低延迟配置，无 B 帧）
-3. 构建滤镜链：`scale=<宽>:<高> → format=<编码器像素格式>`，并在编码前于帧上直接绘制实时时间戳水印（含毫秒，开关默认开启，`--no-watermark` 可关闭）
+3. 构建滤镜链：`scale=<宽>:<高> → format=<编码器像素格式>`，并在编码前于帧上直接绘制实时时间戳水印（含毫秒）
 4. 主循环：读帧 → 解码 → 实时同步（默认按输入帧率）→ 滤镜 → 编码 → 交织写入 RTSP
-5. 每秒刷新推流状态（已解码/已推流帧数、轮次、实时帧率、运行时长）
-6. `Ctrl+C` 安全退出并打印最终统计
+5. 每秒刷新推流状态；`Ctrl+C` / SIGTERM 安全退出并打印最终统计
+
+## 验证
+
+```bash
+# fmt + clippy + 单测（自动探测 FFmpeg 6.1）
+bash scripts/test-rust.sh
+
+# 需要 mediamtx（127.0.0.1:8554）与 ffmpeg/ffprobe
+bash scripts/e2e.sh
+```
+
+`scripts/e2e.sh` 覆盖 H.264/H.265、UDP、循环、水印开/关、SIGINT 退出、不可达 RTSP、无视频流输入；实测结果与 C++ 对比见 [`rust/HANDOFF.md`](rust/HANDOFF.md)。
 
 ## 注意事项
 
 - 需要本地运行 RTSP 服务器（如 mediamtx / rtsp-simple-server），并保证推流路径存在
+- 目标运行库为 **FFmpeg 6.1**；只有 FFmpeg 4.4 运行库的环境不能直接运行本二进制
 - H.265 需要服务端与播放器支持（mediamtx 已支持）；可用 `ffprobe -rtsp_transport tcp -show_streams <rtsp-url>` 确认 `codec_name=hevc`
 - H.265 软件编码（libx265）的 CPU 开销高于 H.264；高分辨率推流建议用 `-b` 限制码率、降低输出分辨率，或使用硬件 HEVC 编码器
 - 输入文件 PTS 异常（如起始时间戳非 0）时，程序按目标帧率统一重排时间戳，保证 RTSP 时间轴稳定
-- 正常退出（Ctrl+C）返回 0；初始化或推流失败返回非零退出码，便于脚本/守护进程判断
+- 正常退出（Ctrl+C / SIGTERM）返回 0；初始化失败、循环 seek 失败返回 1；单次写流失败记录 `[错误] 写入 RTSP 失败: ...` 后继续，最终退出码保持 0（与原 C++ 行为一致）
 - 默认只显示 ERROR 级别 FFmpeg 日志，`-v` 可查看完整日志
-- `build/` 目录与生成的可执行文件不纳入版本管理（见 `.gitignore`）
+- `rust/target/`、`.ffmpeg-sysroot/` 与生成的可执行文件不纳入版本管理（见 `.gitignore`）

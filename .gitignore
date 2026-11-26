@@ -17,6 +17,13 @@ rtsp_pusher
 videos/
 .agents/
 
+# Rust 构建产物、本地 FFmpeg sysroot 与对比用参考二进制
+/rust/target/
+/.ffmpeg-sysroot/
+/.cargo-home/
+/target/
+rtsp_pusher_rs
+
 # mediamtx 运行时产物（二进制/证书/压缩包，勿提交；容器配置见 mediamtx/config.yml）
 /mediamtx/mediamtx
 mediamtx_*.tar.gz
