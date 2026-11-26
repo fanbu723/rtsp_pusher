@@ -7,6 +7,7 @@ services:
     working_dir: /home/dongfan/project/rtsp_pusher
     cap_add:
       - SYS_TIME          # 允许容器内 date -s 校时（修改的是宿主机时钟）
+      - SYS_NICE          # 放行 libx265 的 NUMA 内存策略（set_mempolicy），避免 H.265 推流告警
     volumes:
       - /data:/data
       - /home:/home
