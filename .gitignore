@@ -20,6 +20,7 @@ videos/
 # Rust 构建产物、本地 FFmpeg sysroot 与对比用参考二进制
 /rust/target/
 /.ffmpeg-sysroot/
+/.ffmpeg-src/
 /.cargo-home/
 /target/
 rtsp_pusher_rs

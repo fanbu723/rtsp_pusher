@@ -26,7 +26,7 @@ Ubuntu 24.04 安装 FFmpeg 6.1 开发库：
 apt install -y libavcodec-dev libavformat-dev libavfilter-dev libavutil-dev libswscale-dev libswresample-dev
 ```
 
-Ubuntu 22.04 的 apt 默认是 FFmpeg 4.4，不能直接满足要求；请使用独立的 FFmpeg 6.1 prefix（或容器内 `/app/ffmpeg`），并按下述方式指定头文件。
+Ubuntu 22.04 的 apt 默认是 FFmpeg 4.4，不能直接满足要求。若未安装 FFmpeg 6.1 开发库，`build.sh` 会自动从 FFmpeg 官方仓库拉取 `n6.1.1` 源码到 `.ffmpeg-src/` 并执行 configure 生成头文件，不依赖任何其他项目的预置目录。
 
 如果 FFmpeg 6.1 头文件不在 pkg-config 默认路径（例如使用独立 prefix），构建时指定：
 
@@ -44,9 +44,9 @@ bash build.sh
 
 生成的可执行文件为 `./rtsp_pusher`。
 
-`build.sh` 会调用 `scripts/ffmpeg-env.sh`，按以下顺序寻找 FFmpeg 6.1：`pkg-config` → `FFMPEG_INCLUDE_DIR` → 容器内 `/app/ffmpeg/include` → 运行中 `rtsp_pusher` 容器的 `/app/ffmpeg` 挂载源；必要时在 `.ffmpeg-sysroot/` 生成构建用 sysroot（不纳入版本管理）。
+`build.sh` 会调用 `scripts/ffmpeg-env.sh`，按以下顺序寻找 FFmpeg 6.1 头文件：`pkg-config` → `FFMPEG_INCLUDE_DIR` → 官方 FFmpeg 仓库源码（`.ffmpeg-src/`，自动 clone `n6.1.1` 并 configure）；并在 `.ffmpeg-sysroot/` 生成构建用 sysroot（头文件指向上述来源；库优先 `FFMPEG_LIB_DIR`，否则用系统 FFmpeg 6.1 运行库）。
 
-二进制动态链接 FFmpeg 6.1 运行库（`libavcodec.so.60` 等）。在 `rtsp_pusher` 容器内运行时，`/app/ffmpeg/lib` 已在 `LD_LIBRARY_PATH` 中；宿主机则使用系统 FFmpeg 6.1。
+二进制动态链接 FFmpeg 6.1 运行库（`libavcodec.so.60` 等）。宿主机使用系统 FFmpeg 6.1；容器运行时由 `/app/ffmpeg` 提供 6.1 运行库（见 `docker-compose.yml`）。
 
 ## 项目结构
 
@@ -192,4 +192,4 @@ bash scripts/e2e.sh
 - 输入文件 PTS 异常（如起始时间戳非 0）时，程序按目标帧率统一重排时间戳，保证 RTSP 时间轴稳定
 - 正常退出（Ctrl+C / SIGTERM）返回 0；初始化失败、循环 seek 失败返回 1；单次写流失败记录 `[错误] 写入 RTSP 失败: ...` 后继续，最终退出码保持 0（与原 C++ 行为一致）
 - 默认只显示 ERROR 级别 FFmpeg 日志，`-v` 可查看完整日志
-- `rust/target/`、`.ffmpeg-sysroot/` 与生成的可执行文件不纳入版本管理（见 `.gitignore`）
+- `rust/target/`、`.ffmpeg-src/`、`.ffmpeg-sysroot/` 与生成的可执行文件不纳入版本管理（见 `.gitignore`）
