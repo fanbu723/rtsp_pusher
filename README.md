@@ -37,7 +37,7 @@ bash build.sh
 ## 项目结构
 
 ```text
-push_rtsp/
+rtsp_pusher/
 ├── src/
 │   └── rtsp_pusher.cpp      # 主程序源码
 ├── include/
