@@ -5,7 +5,7 @@
 ## 功能特性
 
 - 读取 FFmpeg 支持的任意视频文件，重新编码为 H.264 推送 RTSP
-- 自动叠加实时时间戳水印（内置点阵字体直接绘制，含毫秒；不依赖 drawtext 滤镜，任何 FFmpeg 均可使用）
+- 自动叠加实时时间戳水印（内置点阵字体直接绘制，含毫秒；不依赖 drawtext 滤镜，任何 FFmpeg 均可使用），默认开启，可用 `--no-watermark` 关闭
 - 自动匹配输入帧率（可手动指定），避免长时间推流画面拖尾
 - 输入文件播放完毕后自动循环播放
 - 实时推流状态日志（已解码/已推流帧数、轮次、实时帧率、运行时长），每秒刷新
@@ -62,6 +62,9 @@ push_rtsp/
 
 # 指定码率 4Mbps、UDP 传输、全速推流
 ./rtsp_pusher -b 4000 -t udp --no-realtime
+
+# 关闭实时时间戳水印（默认开启）
+./rtsp_pusher --no-watermark
 ```
 
 ### 启动 RTSP 服务器（mediamtx）
@@ -113,6 +116,7 @@ ffplay -fflags nobuffer -flags low_delay -framedrop rtsp://127.0.0.1:8554/live3
 | `-t, --transport` | RTSP 传输协议（`tcp` / `udp`） | `tcp` |
 | `-b, --bitrate` | 编码码率 kbps（`0` = CRF 自动） | `0` |
 | `--no-realtime` | 关闭实时速度控制（默认按实时速度推流） | 关闭 |
+| `--no-watermark` | 关闭实时时间戳水印 | 关闭（即水印默认开启） |
 | `--low-latency` | 低延迟模式：减小 GOP（10）与编码缓冲（≈0.25s），降低端到端延迟 | 关闭 |
 | `-v, --verbose` | 显示详细 FFmpeg 日志（默认仅显示错误） | 关闭 |
 | `-h, --help` | 显示帮助 | — |
@@ -121,7 +125,7 @@ ffplay -fflags nobuffer -flags low_delay -framedrop rtsp://127.0.0.1:8554/live3
 
 1. 打开输入文件并探测流信息，获取视频流与真实帧率（`av_guess_frame_rate`）
 2. 创建 RTSP 输出上下文与 H.264 编码器（`ultrafast` / `zerolatency` 低延迟配置，无 B 帧）
-3. 构建滤镜链：`scale=<宽>:<高> → format=<编码器像素格式>`，并在编码前于帧上直接绘制实时时间戳水印（含毫秒）
+3. 构建滤镜链：`scale=<宽>:<高> → format=<编码器像素格式>`，并在编码前于帧上直接绘制实时时间戳水印（含毫秒，开关默认开启，`--no-watermark` 可关闭）
 4. 主循环：读帧 → 解码 → 实时同步（默认按输入帧率）→ 滤镜 → 编码 → 交织写入 RTSP
 5. 每秒刷新推流状态（已解码/已推流帧数、轮次、实时帧率、运行时长）
 6. `Ctrl+C` 安全退出并打印最终统计

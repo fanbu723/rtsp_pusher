@@ -179,6 +179,7 @@ int main(int argc, char* argv[]) {
         ("t,transport", "RTSP 传输协议（tcp/udp）", cxxopts::value<std::string>()->default_value("tcp"))
         ("b,bitrate", "编码码率 kbps（0 表示 CRF 自动）", cxxopts::value<int>()->default_value("0"))
         ("no-realtime", "关闭实时速度控制（默认按实时速度推流）", cxxopts::value<bool>()->default_value("false"))
+        ("no-watermark", "关闭实时时间戳水印（默认开启）", cxxopts::value<bool>()->default_value("false"))
         ("low-latency", "低延迟模式：减小 GOP 与编码缓冲，降低端到端延迟", cxxopts::value<bool>()->default_value("false"))
         ("v,verbose", "显示详细日志（默认只显示错误）", cxxopts::value<bool>()->default_value("false"))
         ("h,help", "显示帮助", cxxopts::value<bool>()->default_value("false"));
@@ -187,6 +188,7 @@ int main(int argc, char* argv[]) {
     int width = 2560, height = 1440;
     int fps_override = 0, bitrate_kbps = 0;
     bool no_realtime = false, verbose = false, low_latency = false;
+    bool no_watermark = false;   // 时间戳水印开关（默认开启，--no-watermark 关闭）
 
     try {
         auto result = opts.parse(argc, argv);
@@ -202,6 +204,7 @@ int main(int argc, char* argv[]) {
         transport = result["transport"].as<std::string>();
         bitrate_kbps = result["bitrate"].as<int>();
         no_realtime = result["no-realtime"].as<bool>();
+        no_watermark = result["no-watermark"].as<bool>();
         low_latency = result["low-latency"].as<bool>();
         verbose = result["verbose"].as<bool>();
     } catch (const cxxopts::exceptions::exception& e) {
@@ -215,9 +218,13 @@ int main(int argc, char* argv[]) {
         av_log_set_level(AV_LOG_ERROR);
     }
 
+    // 时间戳水印开关：默认开启，--no-watermark 可关闭
+    const bool watermark = !no_watermark;
+
     std::cout << "输入文件: " << input_file << std::endl;
     std::cout << "输出地址: " << output_url << std::endl;
     std::cout << "输出尺寸: " << width << "x" << height << std::endl;
+    std::cout << "时间戳水印: " << (watermark ? "已启用" : "已关闭") << std::endl;
 
     // ---------- 1. 打开输入 ----------
     CHECK_ERR(avformat_open_input(&ifmt_ctx, input_file.c_str(), nullptr, nullptr),
@@ -522,15 +529,9 @@ int main(int argc, char* argv[]) {
                 if (ret < 0) break;
 
                 // 实时时间戳水印（含毫秒，直接画在 Y 平面，不依赖 drawtext 滤镜）
-                {
-                    auto now = std::chrono::system_clock::now();
-                    std::time_t sec = std::chrono::system_clock::to_time_t(now);
-                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  now.time_since_epoch()) % 1000;
-                    std::tm* tmv = std::localtime(&sec);
+                if (watermark) {
                     char ts[32];
-                    snprintf(ts, sizeof(ts), "%02d:%02d:%02d.%03d",
-                             tmv->tm_hour, tmv->tm_min, tmv->tm_sec, (int)ms.count());
+                    format_time(ts, sizeof(ts));
                     draw_timestamp(filtered_frame, ts, 2);
                 }
 
