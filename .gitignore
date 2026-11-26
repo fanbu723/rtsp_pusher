@@ -8,9 +8,14 @@ rtsp_pusher
 
 # 输入/输出媒体文件
 *.mp4
+*.avi
 *.ts
 *.flv
 *.mkv
+
+# 本地测试素材与 agent 工作目录
+videos/
+.agents/
 
 # mediamtx 运行时产物（二进制/证书/压缩包，勿提交）
 mediamtx
