@@ -14,6 +14,7 @@
 - 实时推流状态日志（已解码/已推流帧数、轮次、实时帧率、运行时长），每秒刷新
 - RTSP 握手/读写超时保护，避免服务器无响应时程序无限卡死
 - 命令行参数化（基于 clap）
+- Docker Compose 一键并发多路推流（见“多路推流”）
 
 ## 依赖
 
@@ -82,6 +83,7 @@ rtsp_pusher/
 │   ├── repo-user.sh         # root 构建时切换仓库所有者
 │   ├── test-rust.sh         # fmt / clippy / cargo test
 │   ├── e2e.sh               # 端到端验证
+│   ├── streams.sh           # 容器内多路推流启动脚本
 │   └── record-reference.sh  # 录制 C++ 基线
 ├── build.sh                 # 一键构建
 ├── docker-compose.yml       # 容器编排（rtsp_pusher + mediamtx）
@@ -122,7 +124,10 @@ rtsp_pusher/
 docker compose up -d
 ```
 
-该命令会同时启动 rtsp_pusher 与 mediamtx，两者共用主机网络，推流地址仍为 `rtsp://127.0.0.1:8554/<path>`。首次执行会拉取 `bluenviron/mediamtx:1.20.0` 镜像；此时无需再单独执行下面的 docker run。
+该命令会同时启动 mediamtx 和 rtsp_pusher；rtsp_pusher 按
+`scripts/streams.sh` 中的 `STREAMS` 并发推流。两者共用主机网络，推流地址为
+`rtsp://127.0.0.1:8554/<path>`。首次执行会拉取
+`bluenviron/mediamtx:1.20.0` 镜像；此时无需再单独执行下面的 docker run。
 
 **方式一：Docker（推荐）**
 
@@ -156,6 +161,46 @@ mediamtx 默认允许向任意路径推流，无需预先创建 `path`。服务�
 ```bash
 ffplay -fflags nobuffer -flags low_delay -framedrop rtsp://127.0.0.1:8554/live3
 ```
+
+### 多路推流
+
+`docker-compose.yml` 中 `rtsp_pusher` 的 `command` 是 `bash scripts/streams.sh`。
+脚本读取顶部的 `STREAMS` 数组，在同一个容器内为每条配置启动一个 `rtsp_pusher`
+子进程，因此只需要 `docker compose up -d` 就能同时推多路流。
+
+`STREAMS` 的每个元素直接就是一组 `rtsp_pusher` 命令行参数，不需要额外的字段格式：
+
+```bash
+STREAMS=(
+    "-i videos/1_烟火.mp4 -u rtsp://127.0.0.1:8554/cam1 -w 1280 --height 720 -f 25 -c h264 -b 4000 --low-latency"
+    "-i videos/2_加热设备无人值守_无人.mp4 -u rtsp://127.0.0.1:8554/cam2 -w 1280 --height 720 -f 25 -c h264 -b 4000 --low-latency"
+)
+```
+
+每个元素按空白拆分为参数，因此输入路径不能包含空格；以 `#` 开头的元素会被忽略。
+所有流共用容器的镜像、挂载、GPU 和主机网络配置。
+
+```bash
+# 启动 mediamtx 和所有流
+docker compose up -d
+
+# 查看容器状态
+docker compose ps
+
+# 跟踪所有流日志（多路日志会合并输出）
+docker compose logs -f rtsp_pusher
+
+# 只重启推流容器
+docker compose restart rtsp_pusher
+
+# 停止所有服务
+docker compose down
+```
+
+任意一路推流退出时，脚本会停止其余流并退出，随后由 compose 的
+`restart: unless-stopped` 重新拉起整个推流容器，避免只剩部分流在运行。
+默认示例使用 H.264 + NVENC；如播放器对 H.265 支持不好，可继续使用 `-c h264`，
+需要时再改成 `-c h265`。
 
 ### 命令行参数
 
