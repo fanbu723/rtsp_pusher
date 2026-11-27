@@ -7,6 +7,7 @@
 ## 功能特性
 
 - 读取 FFmpeg 支持的任意视频文件，重新编码为 H.264（默认）或 H.265 推送 RTSP（`--codec h265` 切换）
+- 默认优先使用硬件编码器（NVENC / Ascend / QSV），不可用时自动回退 libx264/libx265，并打印回退原因
 - 自动叠加实时时间戳水印（内置点阵字体直接绘制，含毫秒；不依赖 drawtext 滤镜），默认开启，可用 `--no-watermark` 关闭
 - 自动匹配输入帧率（可手动指定），避免长时间推流画面拖尾
 - 输入文件播放完毕后自动循环播放
@@ -18,7 +19,7 @@
 
 - Rust 1.85+（clap 4.6 的最低要求，本项目在 1.100 上验证）
 - FFmpeg 6.1 开发库：`libavcodec` / `libavformat` / `libavfilter` / `libavutil` / `libswscale` / `libswresample`
-- H.265 软件编码需要 FFmpeg 启用 `libx265`；也可使用目标平台的硬件 HEVC 编码器（如 `hevc_nvenc` / Ascend HEVC 插件）
+- H.265 软件编码需要 FFmpeg 启用 `libx265`；硬件编码需要 FFmpeg 编译对应编码器并具备可用驱动/设备（如 NVIDIA NVENC、Ascend、Intel QSV）
 
 Ubuntu 24.04 安装 FFmpeg 6.1 开发库：
 
@@ -166,7 +167,7 @@ ffplay -fflags nobuffer -flags low_delay -framedrop rtsp://127.0.0.1:8554/live3
 ## 工作原理
 
 1. 打开输入文件并探测流信息（`max_analyze_duration=5s`、`probesize=20MB`），获取视频流与真实帧率（`av_guess_frame_rate`）
-2. 创建 RTSP 输出上下文与编码器：默认 H.264，`--codec h265` 时使用 H.265/HEVC（`ultrafast` / `zerolatency` 低延迟配置，无 B 帧）
+2. 创建 RTSP 输出上下文与编码器：默认优先 NVENC → Ascend → QSV，均不可用时回退 libx264/libx265；`--codec h265` 时选择 H.265/HEVC 对应编码器（无 B 帧、低延迟配置）
 3. 构建滤镜链：`scale=<宽>:<高> → format=<编码器像素格式>`，并在编码前于帧上直接绘制实时时间戳水印（含毫秒）
 4. 主循环：读帧 → 解码 → 实时同步（默认按输入帧率）→ 滤镜 → 编码 → 交织写入 RTSP
 5. 每秒刷新推流状态；`Ctrl+C` / SIGTERM 安全退出并打印最终统计
@@ -188,6 +189,7 @@ bash scripts/e2e.sh
 - 需要本地运行 RTSP 服务器（如 mediamtx / rtsp-simple-server），并保证推流路径存在
 - 目标运行库为 **FFmpeg 6.1**；只有 FFmpeg 4.4 运行库的环境不能直接运行本二进制
 - H.265 需要服务端与播放器支持（mediamtx 已支持）；可用 `ffprobe -rtsp_transport tcp -show_streams <rtsp-url>` 确认 `codec_name=hevc`
+- 默认优先硬件编码；日志中的 `使用编码器: ...（硬件）` 表示实际生效的编码器。硬件不可用（无设备、驱动或 FFmpeg 未编译）时会自动回退并打印“回退到软件编码器”，不会静默切换
 - H.265 软件编码（libx265）的 CPU 开销高于 H.264；高分辨率推流建议用 `-b` 限制码率、降低输出分辨率，或使用硬件 HEVC 编码器
 - 输入文件 PTS 异常（如起始时间戳非 0）时，程序按目标帧率统一重排时间戳，保证 RTSP 时间轴稳定
 - 正常退出（Ctrl+C / SIGTERM）返回 0；初始化失败、循环 seek 失败返回 1；单次写流失败记录 `[错误] 写入 RTSP 失败: ...` 后继续，最终退出码保持 0（与原 C++ 行为一致）

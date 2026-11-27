@@ -7,6 +7,7 @@
 - Rust crate：`rust/`，二进制输出到仓库根目录 `./rtsp_pusher`。
 - 目标 FFmpeg 6.1（libavcodec 60）；`ffmpeg-next 6.1.1` / `ffmpeg-sys-next 6.1.0`。
 - 重构提交：`refactor: 用 Rust 重写 RTSP 推流工具`；具体 hash 见 git log。
+- 编码器选择：默认 NVENC → Ascend → QSV → libx264/libx265；硬件打开失败记录后继续，最终回退软件。
 
 ## 构建
 
@@ -18,8 +19,8 @@ bash build.sh
 export FFMPEG_INCLUDE_DIR=/path/to/ffmpeg-6.1/include
 bash build.sh
 
-# 本机：scripts/ffmpeg-env.sh 会自动从运行中的 rtsp_pusher 容器
-# 查询 /app/ffmpeg 的挂载源；无需手动设置。
+# 未安装 6.1 开发头文件时，scripts/ffmpeg-env.sh 会从官方仓库
+# 拉取 n6.1.1 源码到 .ffmpeg-src/ 并 configure；无需其他项目预置目录。
 ```
 
 `build.sh` 会运行 `scripts/ffmpeg-env.sh`，必要时生成 `.ffmpeg-sysroot`（gitignore），然后
@@ -33,9 +34,9 @@ bash scripts/e2e.sh                # 需 rtsp_pusher 容器/mediamtx + ffmpeg/ff
 bash scripts/record-reference.sh   # 需 rtsp_pusher 容器 + mediamtx
 ```
 
-## 实测结果（2026-11-26）
+## 实测结果（2026-11-26 至 2026-11-27）
 
-- `cargo test`：21 个单元测试 + 5 个 CLI 集成测试全部通过。
+- `cargo test`：22 个单元测试 + 5 个 CLI 集成测试全部通过。
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`：通过。
 - `scripts/e2e.sh`：8/8 通过。
   - H.264：`codec_name=h264, width=640, height=360, avg_frame_rate=25/1`，SIGTERM 退出 0，多轮循环。
@@ -50,6 +51,7 @@ bash scripts/record-reference.sh   # 需 rtsp_pusher 容器 + mediamtx
   - 水印 16 背景 bbox 均为 `(482,8)-(631,29)`；255 字形 bbox 起点均为 `(488,12)`，末端因捕获时刻的秒数不同而相差 1–2 像素。
   - C++ 日志/退出码见 `rust/app-cases/reference/`。
 - 实时模式：默认节奏 ≈25fps（实测 25.0–25.9），`--low-latency -b 4000` 正常出流。
+- 硬件优先选择（2026-11-27）：本机无可用 NVENC/QSV，启动时依次尝试并回退 libx264；日志含“硬件编码器 ... 不可用”和“回退到软件编码器”。真实 NVENC/Ascend/QSV 成功路径未验证。
 - 吞吐（`--no-realtime`，仅记录不作为门禁，受机器负载影响）：C++ H.264 ≈1960fps、H.265 ≈386fps；Rust H.264 约 800–2100fps、H.265 约 230–255fps。实时 25fps 均不受影响。
 
 ## 复现参考基线
@@ -63,7 +65,7 @@ docker exec rtsp_pusher bash -lc \
 
 ## 残余风险
 
-- **硬件编码器**（Ascend 等）分支未在真实硬件验证；私有选项改为随 `avcodec_open2` 传入，需现场复测。
+- **硬件编码器**：默认优先选择已接入；NVENC/Ascend/QSV 的成功编码路径未在真实设备验证，当前只验证了失败回退。私有选项按编码器族区分，Ascend 使用 gop/rc_mode/max_bit_rate/frame_rate，NVENC/QSV 使用通用字段。
 - **FFmpeg 版本**：目标 6.1；只有 4.4 运行库的环境不能直接运行新二进制（容器通过 `/app/ffmpeg/lib` 提供 6.1）。
 - **写流失败语义**：保持 C++ 的“记录后继续、退出 0”，与旧 README 的笼统描述不同；README 已修正。
 - **性能**：Rust H.265 软编吞吐低于 C++（约 60%），但实时 25fps 有充足余量；如追求吞吐可再 profile 滤镜/包处理路径。

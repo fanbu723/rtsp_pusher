@@ -7,6 +7,7 @@
 - 写帧失败只记录 `[错误] 写入 RTSP 失败: ...` 并继续，最终退出码保持 0（ADR-005）。
 - 水印位置/颜色/字体表/裁剪必须与 C++ 的 `draw_timestamp` 一致；时间格式 `HH:MM:SS.mmm`，本地时区。
 - 编码参数公式不得改动：软编默认 CRF、硬编默认 2–20 Mbps、GOP 25/10、无 B 帧、低延迟 RC 比例。
+- 默认编码器按 NVENC → Ascend → QSV → libx264/libx265 的顺序选择；硬件打开失败只记录并继续，最终回退软件编码器；VAAPI 不自动选择（需要额外硬件帧上下文）。
 - 输入探测参数保持 `max_analyze_duration=5s`、`probesize=20MB`。
 - 只设置 FFmpeg 6.1 支持的 RTSP `timeout=5000000`，不要重新引入 `stimeout`。
 - 编码器私有选项必须随 `avcodec_open2` 的 dictionary 传入；不要用 open 前的 `av_opt_set`。

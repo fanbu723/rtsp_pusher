@@ -1,4 +1,3 @@
-use ffmpeg_next::codec::Id;
 use ffmpeg_next::format::Pixel;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -25,13 +24,6 @@ impl OutputCodec {
             OutputCodec::H265 => "H.265 (HEVC)",
         }
     }
-
-    pub fn ffmpeg_id(self) -> Id {
-        match self {
-            OutputCodec::H264 => Id::H264,
-            OutputCodec::H265 => Id::HEVC,
-        }
-    }
 }
 
 pub fn parse_output_codec(name: &str) -> Option<OutputCodec> {
@@ -40,6 +32,16 @@ pub fn parse_output_codec(name: &str) -> Option<OutputCodec> {
 
 pub fn is_software_encoder(name: &str) -> bool {
     name == "libx264" || name == "libx265"
+}
+
+/// 默认编码器候选：硬件优先，最后回退到软件编码器。
+///
+/// VAAPI 需要显式创建硬件帧上下文，当前管线不支持，因此不列入自动候选。
+pub fn encoder_candidates(codec: OutputCodec) -> &'static [&'static str] {
+    match codec {
+        OutputCodec::H264 => &["h264_nvenc", "h264_ascend", "h264_qsv", "libx264"],
+        OutputCodec::H265 => &["hevc_nvenc", "hevc_ascend", "hevc_qsv", "libx265"],
+    }
 }
 
 /// 选择编码器支持的像素格式：优先 yuv420p，否则第一个支持的格式。
@@ -170,6 +172,19 @@ mod tests {
         assert!(is_software_encoder("libx265"));
         assert!(!is_software_encoder("h264_ascend"));
         assert!(!is_software_encoder(""));
+    }
+
+    #[test]
+    fn hardware_encoders_precede_software_fallback() {
+        let h264 = encoder_candidates(OutputCodec::H264);
+        assert_eq!(h264.first().copied(), Some("h264_nvenc"));
+        assert_eq!(h264.last().copied(), Some("libx264"));
+        assert!(is_software_encoder(h264.last().unwrap()));
+
+        let h265 = encoder_candidates(OutputCodec::H265);
+        assert_eq!(h265.first().copied(), Some("hevc_nvenc"));
+        assert_eq!(h265.last().copied(), Some("libx265"));
+        assert!(is_software_encoder(h265.last().unwrap()));
     }
 
     #[test]

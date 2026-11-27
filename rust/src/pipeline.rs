@@ -28,6 +28,146 @@ fn is_again_or_eof(error: &ffmpeg::Error) -> bool {
         || matches!(*error, ffmpeg::Error::Other { errno } if errno == libc::EAGAIN)
 }
 
+struct OpenedEncoder {
+    encoder: ffmpeg::codec::encoder::Video,
+    name: String,
+    is_hardware: bool,
+    pixel_format: Pixel,
+    settings: settings::EncoderSettings,
+}
+
+fn ffmpeg_error_message(error: &ffmpeg::Error) -> String {
+    let message = error.to_string();
+    if message.is_empty() {
+        format!("FFmpeg 错误码 {}", i32::from(*error))
+    } else {
+        message
+    }
+}
+
+fn try_open_encoder(
+    encoder_codec: ffmpeg::codec::codec::Codec,
+    cli: &Cli,
+    source_fps: Rational,
+) -> Result<OpenedEncoder, AppError> {
+    let encoder_name = encoder_codec.name().to_string();
+    let is_hardware = !settings::is_software_encoder(&encoder_name);
+    let pixel_format = settings::choose_pixel_format(&fx::encoder_pixel_formats(&encoder_codec));
+    let plan = settings::build_encoder_settings(settings::EncoderRequest {
+        width: cli.width,
+        height: cli.height,
+        fps_num: source_fps.0,
+        fps_den: source_fps.1,
+        bitrate_kbps: cli.bitrate,
+        low_latency: cli.low_latency,
+        is_hardware,
+        pix_fmt: pixel_format,
+    });
+
+    let mut encoder_context = fx::new_encoder_context(&encoder_codec)
+        .map_err(|error| AppError::ctx("打开编码器失败", error))?
+        .encoder()
+        .video()
+        .map_err(|error| AppError::ctx("打开编码器失败", error))?;
+    encoder_context.set_width(cli.width as u32);
+    encoder_context.set_height(cli.height as u32);
+    encoder_context.set_format(pixel_format);
+    encoder_context.set_time_base(source_fps);
+    encoder_context.set_frame_rate(Some(source_fps));
+    encoder_context.set_bit_rate(plan.bit_rate as usize);
+    encoder_context.set_gop(plan.gop as u32);
+    encoder_context.set_max_b_frames(plan.max_b_frames);
+    let mut flags = Flags::GLOBAL_HEADER;
+    if plan.low_latency {
+        flags |= Flags::LOW_DELAY;
+    }
+    encoder_context.set_flags(flags);
+    fx::set_keyint_min(&mut encoder_context, plan.keyint_min);
+    if plan.rc_max_rate > 0 {
+        fx::set_rate_control(&mut encoder_context, plan.rc_max_rate, plan.rc_buffer_size);
+    }
+
+    // 编码器私有 AVOption 必须随 avcodec_open2 传入：FFmpeg 6.1 的
+    // AVCodecContext.priv_data 在 open 前不可用，直接 av_opt_set 会静默失败。
+    let mut encoder_options = ffmpeg::Dictionary::new();
+    if is_hardware {
+        // gop/rc_mode/max_bit_rate/frame_rate 是 Ascend 插件的私有选项；
+        // NVENC/QSV 使用 AVCodecContext 的通用字段即可。
+        if encoder_name.ends_with("_ascend") {
+            encoder_options.set("gop", &plan.hw_gop.to_string());
+            encoder_options.set("rc_mode", &plan.hw_rc_mode.to_string());
+            encoder_options.set("max_bit_rate", &plan.hw_max_bit_rate.to_string());
+            encoder_options.set("frame_rate", &plan.hw_frame_rate.to_string());
+            if cli.verbose {
+                println!(
+                    "{}: gop={} rc_mode=CBR bitrate={}kbps fps={}",
+                    encoder_name, plan.hw_gop, plan.hw_max_bit_rate, plan.hw_frame_rate
+                );
+            }
+        }
+    } else {
+        encoder_options.set("preset", "ultrafast");
+        encoder_options.set("tune", "zerolatency");
+        if !cli.verbose && encoder_name == "libx265" {
+            encoder_options.set("x265-params", "log-level=error");
+        }
+    }
+
+    let encoder = encoder_context
+        .open_as_with(encoder_codec, encoder_options)
+        .map_err(|error| {
+            AppError::msg(format!(
+                "打开编码器 {encoder_name} 失败: {}",
+                ffmpeg_error_message(&error)
+            ))
+        })?;
+
+    Ok(OpenedEncoder {
+        encoder,
+        name: encoder_name,
+        is_hardware,
+        pixel_format,
+        settings: plan,
+    })
+}
+
+fn open_encoder_with_fallback(
+    output_codec: settings::OutputCodec,
+    cli: &Cli,
+    source_fps: Rational,
+) -> Result<OpenedEncoder, AppError> {
+    let mut last_error = None;
+
+    for name in settings::encoder_candidates(output_codec) {
+        let Some(encoder_codec) = ffmpeg::codec::encoder::find_by_name(name) else {
+            continue;
+        };
+        match try_open_encoder(encoder_codec, cli, source_fps) {
+            Ok(opened) => {
+                if !opened.is_hardware {
+                    eprintln!("未找到可用的硬件编码器，回退到软件编码器: {}", opened.name);
+                }
+                return Ok(opened);
+            }
+            Err(error) => {
+                if settings::is_software_encoder(name) {
+                    return Err(error);
+                }
+                eprintln!("硬件编码器 {name} 不可用: {error}");
+                last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    let detail = last_error
+        .map(|error| format!("；最后一次错误: {error}"))
+        .unwrap_or_default();
+    Err(AppError::msg(format!(
+        "找不到可用的 {} 编码器{detail}（请确认 FFmpeg 已编译 NVENC/Ascend/QSV 或 libx264/libx265）",
+        output_codec.display()
+    )))
+}
+
 pub fn run(cli: Cli, output_codec: settings::OutputCodec) -> Result<(), AppError> {
     if !cli.verbose {
         fx::set_log_level_error();
@@ -111,34 +251,24 @@ pub fn run(cli: Cli, output_codec: settings::OutputCodec) -> Result<(), AppError
 
     let mut output = fx::alloc_rtsp_output(&cli.url)
         .map_err(|error| AppError::ctx("创建输出上下文失败", error))?;
-    let encoder_codec =
-        ffmpeg::codec::encoder::find(output_codec.ffmpeg_id()).ok_or_else(|| {
-            AppError::msg(format!(
-                "找不到 {} 编码器（请确认 FFmpeg 已编译 libx265 或对应硬件编码器）",
-                output_codec.display()
-            ))
-        })?;
-    let encoder_name = encoder_codec.name().to_string();
-    let is_hardware = !settings::is_software_encoder(&encoder_name);
-    let supported_pixel_formats = fx::encoder_pixel_formats(&encoder_codec);
-    let encoder_pixel_format = settings::choose_pixel_format(&supported_pixel_formats);
+    let OpenedEncoder {
+        mut encoder,
+        name: encoder_name,
+        is_hardware,
+        pixel_format: encoder_pixel_format,
+        settings: plan,
+    } = open_encoder_with_fallback(output_codec, &cli, source_fps)?;
 
     println!(
-        "使用编码器: {}，像素格式: {}",
+        "使用编码器: {}{}，像素格式: {}",
         encoder_name,
+        if is_hardware {
+            "（硬件）"
+        } else {
+            "（软件）"
+        },
         fx::pixel_name(encoder_pixel_format)
     );
-
-    let plan = settings::build_encoder_settings(settings::EncoderRequest {
-        width: cli.width,
-        height: cli.height,
-        fps_num: source_fps.0,
-        fps_den: source_fps.1,
-        bitrate_kbps: cli.bitrate,
-        low_latency: cli.low_latency,
-        is_hardware,
-        pix_fmt: encoder_pixel_format,
-    });
 
     if cli.bitrate <= 0 && is_hardware {
         println!(
@@ -149,55 +279,6 @@ pub fn run(cli: Cli, output_codec: settings::OutputCodec) -> Result<(), AppError
     if cli.low_latency {
         println!("低延迟模式已启用（GOP=10，缓冲≈0.25s）");
     }
-
-    let mut encoder_context = fx::new_encoder_context(&encoder_codec)
-        .map_err(|error| AppError::ctx("打开编码器失败", error))?
-        .encoder()
-        .video()
-        .map_err(|error| AppError::ctx("打开编码器失败", error))?;
-    encoder_context.set_width(cli.width as u32);
-    encoder_context.set_height(cli.height as u32);
-    encoder_context.set_format(encoder_pixel_format);
-    encoder_context.set_time_base(source_fps);
-    encoder_context.set_frame_rate(Some(source_fps));
-    encoder_context.set_bit_rate(plan.bit_rate as usize);
-    encoder_context.set_gop(plan.gop as u32);
-    encoder_context.set_max_b_frames(plan.max_b_frames);
-    let mut flags = Flags::GLOBAL_HEADER;
-    if plan.low_latency {
-        flags |= Flags::LOW_DELAY;
-    }
-    encoder_context.set_flags(flags);
-    fx::set_keyint_min(&mut encoder_context, plan.keyint_min);
-    if plan.rc_max_rate > 0 {
-        fx::set_rate_control(&mut encoder_context, plan.rc_max_rate, plan.rc_buffer_size);
-    }
-
-    // 编码器私有 AVOption 必须随 avcodec_open2 传入：FFmpeg 6.1 的
-    // AVCodecContext.priv_data 在 open 前不可用，直接 av_opt_set 会静默失败。
-    let mut encoder_options = ffmpeg::Dictionary::new();
-    if is_hardware {
-        encoder_options.set("gop", &plan.hw_gop.to_string());
-        encoder_options.set("rc_mode", &plan.hw_rc_mode.to_string());
-        encoder_options.set("max_bit_rate", &plan.hw_max_bit_rate.to_string());
-        encoder_options.set("frame_rate", &plan.hw_frame_rate.to_string());
-        if cli.verbose {
-            println!(
-                "{}: gop={} rc_mode=CBR bitrate={}kbps fps={}",
-                encoder_name, plan.hw_gop, plan.hw_max_bit_rate, plan.hw_frame_rate
-            );
-        }
-    } else {
-        encoder_options.set("preset", "ultrafast");
-        encoder_options.set("tune", "zerolatency");
-        if !cli.verbose && encoder_name == "libx265" {
-            encoder_options.set("x265-params", "log-level=error");
-        }
-    }
-
-    let mut encoder = encoder_context
-        .open_as_with(encoder_codec, encoder_options)
-        .map_err(|error| AppError::ctx("打开编码器失败", error))?;
 
     let encoder_time_base = fx::encoder_time_base(&encoder);
     let (output_stream_index, output_time_base) = {

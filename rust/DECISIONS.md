@@ -109,3 +109,13 @@ Context: `ffmpeg-next::filter::Graph::parse` 不带 in/out 端点，直接把 `b
 Decision: 使用 `graph.output("in", 0)?.input("out", 0)?.parse(desc)?`，与 C++ 的 `avfilter_graph_parse_ptr(..., &inputs, &outputs, ...)` 对齐。
 
 Consequences: 滤镜链 `scale=W:H,format=<pix>` 正常配置。
+
+## ADR-011：默认优先硬件编码，打开失败回退软件
+
+Status: accepted (2026-11-27)
+
+Context: 部署容器使用 NVIDIA 4090（`runtime: nvidia`），但旧实现只调用 `avcodec_find_encoder`，在当前 FFmpeg 中返回 libx264/libx265，硬件编码器从未被选中。目标环境也可能使用 Ascend 或 QSV；无 GPU 的开发机需要继续可运行。
+
+Decision: 默认按 h264_nvenc/hevc_nvenc → h264_ascend/hevc_ascend → h264_qsv/hevc_qsv → libx264/libx265 的顺序尝试。每个候选都完整配置并调用 avcodec_open2，失败时记录原因并继续；只有软件候选也失败才返回错误。VAAPI 需要显式创建硬件帧上下文，暂不列入自动候选。
+
+Consequences: 有可用硬件时默认硬编；无硬件/驱动时自动回退软件并打印原因，不静默降级。NVENC/Ascend/QSV 的成功编码路径仍需在对应真实设备上复测。

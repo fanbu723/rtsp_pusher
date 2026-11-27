@@ -2,7 +2,7 @@
 
 目标：把 `rtsp_pusher` 从 C++/FFmpeg 4.4 单文件工具等价重构为 Rust/FFmpeg 6.1，保持 CLI、推流行为、日志结构、退出码与部署方式。
 
-状态：**单单元 whole-app 移植已完成**（硬件编码器分支未实测）。C++ 已删除；`main` 分支仍保留原实现。
+状态：**单单元 whole-app 移植已完成，默认硬件优先选择已接入**（真实硬件成功路径未验证）。C++ 已删除；`main` 分支仍保留原实现。
 
 ## 单元
 
@@ -10,12 +10,12 @@
 |---|---|---|---|
 | CLI 契约 | done | `rust/src/cli.rs` | `cargo test` 的 5 个 CLI 集成用例 + `app-cases/cli.md` |
 | 时间戳格式/水印 | done | `rust/src/watermark.rs` | 5 个像素级单测 + E2E 水印开/关 + C++/Rust 帧结构对比 |
-| 编码器参数 | done | `rust/src/settings.rs` | 8 个单测覆盖码率/GOP/像素格式/硬编码分支 |
+| 编码器参数 | done | `rust/src/settings.rs` | 9 个单测覆盖码率/GOP/像素格式/编码器候选顺序/硬编码分支 |
 | 实时节奏 | done | `rust/src/pacing.rs` | 3 个单测 + 实时模式 25fps E2E |
 | FFmpeg 输入/解码 | done | `rust/src/ffmpeg_ext.rs`, `pipeline.rs` | H.264/H.265 E2E、无视频流失败路径 |
 | 滤镜/水印/编码/RTSP | done | `rust/src/pipeline.rs` | H.264/H.265/UDP `ffprobe` 属性、循环轮次、C++ 对比 |
 | 信号与退出码 | done | `pipeline.rs` | SIGINT 退出 0、SIGTERM 退出 0、不可达 RTSP 退出 1 |
-| 硬件编码器（Ascend 等） | 未验证 | `pipeline.rs` | 保留原分支逻辑；本机无对应硬件 |
+| 硬件编码器（NVENC/Ascend/QSV） | 回退已验证 | `pipeline.rs` | 默认顺序尝试，失败回退 libx264/libx265；真实硬件成功路径未验证 |
 
 ## 检查点
 
@@ -26,7 +26,7 @@
 
 ## 未决问题
 
-- 硬件编码器私有选项在 FFmpeg 6.1 下需通过 `avcodec_open2` 的 dictionary 传入；逻辑已保留，但无硬件验证。
+- 硬件编码器按 NVENC → Ascend → QSV → 软件顺序尝试；NVENC/Ascend/QSV 的成功路径无真实设备验证，当前验证的是打开失败后的软件回退。
 - Rust 在 `--no-realtime` 下 H.264 吞吐与 C++ 相当到略低，H.265 约低 35–40%（见 HANDOFF）；实时 25fps 不受影响。
 - C++ 写帧失败仍返回 0 的历史行为已按用户确认保留。
 
