@@ -3,7 +3,13 @@
 set -euo pipefail
 
 if [ -z "${CARGO_HOME:-}" ]; then
-    for candidate in "$HOME/.cargo" /home/*/.cargo /usr/local/cargo; do
+    candidates=()
+    # 仓库内工具链（scripts/install-rust.sh 安装）优先级最高
+    if [ -n "${ROOT:-}" ]; then
+        candidates+=("$ROOT/.cargo-home")
+    fi
+    candidates+=("$HOME/.cargo" /home/*/.cargo /usr/local/cargo)
+    for candidate in "${candidates[@]}"; do
         if [ -x "$candidate/bin/cargo" ]; then
             CARGO_HOME="$candidate"
             break
@@ -19,7 +25,12 @@ if [ -n "${CARGO_HOME:-}" ]; then
 fi
 
 if [ -z "${RUSTUP_HOME:-}" ]; then
-    for candidate in "$HOME/.rustup" /home/*/.rustup /usr/local/rustup; do
+    candidates=()
+    if [ -n "${ROOT:-}" ]; then
+        candidates+=("$ROOT/.rustup-home")
+    fi
+    candidates+=("$HOME/.rustup" /home/*/.rustup /usr/local/rustup)
+    for candidate in "${candidates[@]}"; do
         if [ -d "$candidate/toolchains" ]; then
             RUSTUP_HOME="$candidate"
             break
@@ -33,4 +44,15 @@ fi
 if ! command -v cargo >/dev/null 2>&1; then
     echo "找不到 cargo。请安装 Rust，或设置 CARGO_HOME/RUSTUP_HOME/PATH 指向已安装的工具链。" >&2
     exit 1
+fi
+
+# 提前把「cargo 版本过旧」翻译成可执行的提示，避免 cargo 报 edition2024 之类的晦涩错误。
+if [ -n "${ROOT:-}" ] && [ -f "$ROOT/rust/Cargo.toml" ]; then
+    min_rust=$(awk -F'"' '/^rust-version[[:space:]]*=/{print $2; exit}' "$ROOT/rust/Cargo.toml")
+    have_rust=$(cargo -V 2>/dev/null | awk '{print $2}')
+    if [ -n "$min_rust" ] && [ -n "$have_rust" ] &&
+        [ "$(printf '%s\n%s\n' "$min_rust" "$have_rust" | sort -V | head -n1)" != "$min_rust" ]; then
+        echo "cargo $have_rust 低于项目要求的 $min_rust；先运行: bash $ROOT/scripts/install-rust.sh" >&2
+        exit 1
+    fi
 fi

@@ -12,6 +12,10 @@
 ## 构建
 
 ```bash
+# 首次构建（无 Rust 或 cargo < 1.85）：工具链装到仓库内 .cargo-home/.rustup-home
+bash scripts/install-rust.sh
+bash build.sh
+
 # 普通环境（已装 libav*-dev 6.1）：直接构建
 bash build.sh
 
@@ -27,7 +31,13 @@ bash build.sh
 `cargo build --release` 并把二进制复制到根目录。
 
 容器内以 root 执行时，`scripts/repo-user.sh` 会切换到仓库所有者 UID，避免产物变成 root 所有；
-`scripts/rust-env.sh` 会从 `/home/*/.cargo` 和 `/home/*/.rustup` 复用挂载的 Rust 工具链。
+`scripts/rust-env.sh` 优先使用仓库内 `.cargo-home`/`.rustup-home`（由 `install-rust.sh` 安装，
+不随容器重建丢失），其次才查找 `/home/*/.cargo`、`/usr/local/cargo`；cargo 版本低于
+`rust/Cargo.toml` 的 `rust-version` 时直接提示安装，不再报 `edition2024`。
+
+`ffmpeg-env.sh` 链接时附加 `-Wl,--allow-shlib-undefined`：FFmpeg 6.1 共享库自身依赖的
+`x264/x265/libva/libnpp/fdk-aac` 不一定在链接器默认搜索路径（如 `/app/libs`、`/usr/local/cuda/lib64`）。
+该选项只放宽共享库内部符号检查，运行期仍由动态加载器解析，二进制需 `ldd` 无 `not found`。
 容器内缺少 libclang 时先安装：
 
 ```bash
@@ -60,6 +70,7 @@ bash scripts/record-reference.sh   # 需 rtsp_pusher 容器 + mediamtx
   - C++ 日志/退出码见 `rust/app-cases/reference/`。
 - 实时模式：默认节奏 ≈25fps（实测 25.0–25.9），`--low-latency -b 4000` 正常出流。
 - 硬件优先选择（2026-11-27）：默认 Docker 容器 `runtime: nvidia` 下 `h264_nvenc`/`hevc_nvenc` 已实测；无 GPU 环境下依次尝试并回退 libx264 的路径也已验证；Ascend/QSV 未验证。
+- 构建工具链（2026-11-27）：仓库内 cargo 1.85.1 在 u22.04 宿主机完整编译通过，产物 `GLIBC` 需求最高 2.34；cargo 1.75 会因 `clap_lex` 的 `edition2024` 失效，现已由 `rust-env.sh` 提前拦截。容器内 `bash build.sh` 复测待执行。
 - 时间基/PTS 修复（2026-11-27）：编码器时间基改为 `1/fps`，并在 RTSP 写头后重新读取 1/90000 输出时间基。20fps 流 `ffprobe` 的 `pts_time` 间隔从约 0.000011s 恢复为 0.05s；`scripts/e2e.sh` 已加回归断言。详见 ADR-012。
 - 吞吐（`--no-realtime`，仅记录不作为门禁，受机器负载影响）：C++ H.264 ≈1960fps、H.265 ≈386fps；Rust H.264 约 800–2100fps、H.265 约 230–255fps。实时 25fps 均不受影响。
 

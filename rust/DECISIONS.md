@@ -129,3 +129,13 @@ Context: Rust 移植把 `encoder.time_base` 设成了 `{fps_num, fps_den}`（如
 Decision: 编码器时间基固定为帧率的倒数；写头后重新读取 `AVStream.time_base`，再用 `av_packet_rescale_ts(encoder_time_base, output_time_base)`。E2E 增加 RTSP `pts_time` 间隔断言。
 
 Consequences: 20fps 流的 PTS 间隔应为 0.05s（90000 时间基下 4500 tick）；H.264/H.265 E2E 均验证通过。mpv 对 HEVC 仍可能打印 `No video PTS`，该现象用 FFmpeg CLI 直接推流到 MediaMTX 也能复现，属于播放器/服务端组合问题，不是推流端时间基回归。
+
+## ADR-013：工具链放在仓库内，放宽 FFmpeg 共享库内部符号检查
+
+Status: accepted (2026-11-27)
+
+Context: 容器镜像自带的 cargo 是 1.75.0，低于 `rust/Cargo.toml` 的 `rust-version = "1.85"`；`clap 4.6` 依赖的 `clap_lex 1.1.2` 使用 `edition2024`，cargo 1.75 直接解析失败。此前工具链被装在 `/tmp/.cargo`，容器重建即丢失。另外，本机 FFmpeg 6.1 共享库自身依赖 `x264/x265/libva/libnpp/fdk-aac`，这些库不在链接器默认搜索路径，链接时报 `undefined reference to x264_*` 等。
+
+Decision: 新增 `scripts/install-rust.sh`，把工具链装到仓库内 `.cargo-home` / `.rustup-home`（gitignore），并安装 `rustfmt`/`clippy` 组件；`scripts/rust-env.sh` 优先使用这两个目录，并在 cargo 版本低于 `rust-version` 时直接提示运行该脚本。`scripts/ffmpeg-env.sh` 为链接增加 `-Wl,--allow-shlib-undefined`，只放宽共享库内部未定义符号，运行期仍由动态加载器强制解析。
+
+Consequences: 容器重建后无需重装工具链，`bash build.sh` 直接可用；链接不再因 FFmpeg 的第三方依赖路径缺失而失败，真正缺库会在启动或 `ldd` 阶段暴露（容器运行期仍需 `/app/ffmpeg/lib` 在动态库搜索路径中）。宿主机验证：cargo 1.85.1 完整编译通过，产物 `GLIBC` 需求最高 2.34。

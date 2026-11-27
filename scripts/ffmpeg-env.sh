@@ -117,5 +117,11 @@ if [ -z "${LIBCLANG_PATH:-}" ] && ! ldconfig -p 2>/dev/null | grep 'libclang\.so
     exit 1
 fi
 
+# FFmpeg 共享库自身还依赖 x264/x265/libva/libnpp/fdk-aac 等第三方库，
+# 它们不一定在链接器默认搜索路径里（如 /app/libs、/usr/local/cuda/lib64）。
+# 这里只放宽「共享库内部未定义符号」的链接期检查；运行时仍由动态加载器强制解析，
+# 真正的缺库会表现为启动失败（可用 ldd 查看）。
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-Wl,--allow-shlib-undefined"
+
 export FFMPEG_DIR="$SYSROOT"
 echo "使用 FFmpeg 6.1 头文件: $include_dir（libavcodec $header_major.$header_minor）" >&2

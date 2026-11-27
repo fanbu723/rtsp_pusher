@@ -18,7 +18,7 @@
 
 ## 依赖
 
-- Rust 1.85+（clap 4.6 的最低要求，本项目在 1.100 上验证）
+- Rust 1.85+（clap 4.6 的最低要求，本项目在 1.85.1 上验证）
 - FFmpeg 6.1 开发库：`libavcodec` / `libavformat` / `libavfilter` / `libavutil` / `libswscale` / `libswresample`
 - 构建时需要 libclang（ffmpeg-sys-next 的 bindgen 依赖）；Ubuntu 可执行 `apt install -y libclang-dev`
 - H.265 软件编码需要 FFmpeg 启用 `libx265`；硬件编码需要 FFmpeg 编译对应编码器并具备可用驱动/设备（如 NVIDIA NVENC、Ascend、Intel QSV）
@@ -42,12 +42,14 @@ export FFMPEG_LIB_DIR=/path/to/ffmpeg-6.1/lib
 ## 构建
 
 ```bash
+# 首次构建：Rust < 1.85 时先装工具链到仓库内的 .cargo-home/.rustup-home
+bash scripts/install-rust.sh
 bash build.sh
 ```
 
 生成的可执行文件为 `./rtsp_pusher`。
 
-构建脚本会自动定位 Rust 工具链：优先使用当前 `CARGO_HOME`，否则查找 `$HOME/.cargo`、`/home/*/.cargo` 和 `/usr/local/cargo`，并匹配对应的 `RUSTUP_HOME`。因此在 `rtsp_pusher` 容器内以 root 执行时，也能复用 `/home` 下挂载的 Rust 工具链。
+构建脚本会自动定位 Rust 工具链：优先使用当前 `CARGO_HOME`，其次仓库内的 `.cargo-home`（由 `scripts/install-rust.sh` 安装），再查找 `$HOME/.cargo`、`/home/*/.cargo` 和 `/usr/local/cargo`，并匹配对应的 `RUSTUP_HOME`。cargo 版本低于 `rust/Cargo.toml` 的 `rust-version` 时直接提示安装，不会再去解析 `edition2024` 依赖。因此在 `rtsp_pusher` 容器内以 root 执行时，也能复用 `/home` 下挂载的 Rust 工具链。
 
 在容器内以 root 构建时，脚本会切换到仓库所有者 UID 执行，避免 `rust/target`、`.ffmpeg-sysroot` 和最终二进制变成 root 所有。容器内还需要安装 libclang：
 
@@ -57,7 +59,7 @@ apt install -y libclang-dev
 
 `build.sh` 会调用 `scripts/ffmpeg-env.sh`，按以下顺序寻找 FFmpeg 6.1 头文件：`pkg-config` → `FFMPEG_INCLUDE_DIR` → 官方 FFmpeg 仓库源码（`.ffmpeg-src/`，自动 clone `n6.1.1` 并 configure）；并在 `.ffmpeg-sysroot/` 生成构建用 sysroot（头文件指向上述来源；库优先 `FFMPEG_LIB_DIR`，容器内自动使用 `/app/ffmpeg/lib`，否则用系统 FFmpeg 6.1 运行库）。
 
-二进制动态链接 FFmpeg 6.1 运行库（`libavcodec.so.60` 等）。宿主机使用系统 FFmpeg 6.1；容器运行时由 `/app/ffmpeg` 提供 6.1 运行库（见 `docker-compose.yml`）。
+二进制动态链接 FFmpeg 6.1 运行库（`libavcodec.so.60` 等）。宿主机使用系统 FFmpeg 6.1；容器运行时由 `/app/ffmpeg` 提供 6.1 运行库（见 `docker-compose.yml`），运行时需要让动态加载器找到它，例如在 compose 里设置 `LD_LIBRARY_PATH=/app/ffmpeg/lib`。
 
 ## 项目结构
 

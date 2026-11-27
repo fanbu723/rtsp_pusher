@@ -22,6 +22,7 @@ videos/
 /.ffmpeg-sysroot/
 /.ffmpeg-src/
 /.cargo-home/
+/.rustup-home/
 /target/
 rtsp_pusher_rs
 
