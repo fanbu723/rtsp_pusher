@@ -45,6 +45,14 @@ fn ffmpeg_error_message(error: &ffmpeg::Error) -> String {
     }
 }
 
+fn encoder_time_base_from_fps(fps: Rational) -> Rational {
+    if fps.0 > 0 && fps.1 > 0 {
+        Rational(fps.1, fps.0)
+    } else {
+        Rational(1, 25)
+    }
+}
+
 fn try_open_encoder(
     encoder_codec: ffmpeg::codec::codec::Codec,
     cli: &Cli,
@@ -72,7 +80,10 @@ fn try_open_encoder(
     encoder_context.set_width(cli.width as u32);
     encoder_context.set_height(cli.height as u32);
     encoder_context.set_format(pixel_format);
-    encoder_context.set_time_base(source_fps);
+    // 编码器时间基是帧率的倒数（1/fps），不是 fps 本身。
+    // 写成 source_fps 会让 PTS 每帧只前进 1 个 tick，RTSP 端表现为
+    // 所有帧挤在几微秒内，播放器会报 "No video PTS" 并大量丢帧。
+    encoder_context.set_time_base(encoder_time_base_from_fps(source_fps));
     encoder_context.set_frame_rate(Some(source_fps));
     encoder_context.set_bit_rate(plan.bit_rate as usize);
     encoder_context.set_gop(plan.gop as u32);
@@ -281,7 +292,7 @@ pub fn run(cli: Cli, output_codec: settings::OutputCodec) -> Result<(), AppError
     }
 
     let encoder_time_base = fx::encoder_time_base(&encoder);
-    let (output_stream_index, output_time_base) = {
+    let (output_stream_index, mut output_time_base) = {
         let mut output_stream = output
             .add_stream(None::<ffmpeg::Codec>)
             .map_err(|_| AppError::msg("创建输出流失败"))?;
@@ -341,6 +352,21 @@ pub fn run(cli: Cli, output_codec: settings::OutputCodec) -> Result<(), AppError
     output
         .write_header_with(options)
         .map_err(|error| AppError::ctx("写头失败", error))?;
+
+    // RTSP/RTP muxer 会在写头时把流时间基改成 1/90000；必须重新读取，
+    // 否则后续 rescale_ts 仍按写头前的时间基换算，PTS 会再次被压成 1 tick。
+    if let Some(stream) = output.stream(output_stream_index) {
+        let negotiated = stream.time_base();
+        if negotiated.0 > 0 && negotiated.1 > 0 {
+            output_time_base = negotiated;
+        }
+    }
+    if cli.verbose {
+        println!(
+            "编码器时间基: {}/{}，输出时间基: {}/{}",
+            encoder_time_base.0, encoder_time_base.1, output_time_base.0, output_time_base.1
+        );
+    }
 
     println!("RTSP 连接成功，开始推流（Ctrl+C 退出）...");
 
@@ -502,4 +528,24 @@ pub fn run(cli: Cli, output_codec: settings::OutputCodec) -> Result<(), AppError
         return Err(AppError::Reported);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoder_time_base_is_reciprocal_of_frame_rate() {
+        assert_eq!(encoder_time_base_from_fps(Rational(20, 1)), Rational(1, 20));
+        assert_eq!(
+            encoder_time_base_from_fps(Rational(30000, 1001)),
+            Rational(1001, 30000)
+        );
+    }
+
+    #[test]
+    fn invalid_frame_rate_falls_back_to_25fps_time_base() {
+        assert_eq!(encoder_time_base_from_fps(Rational(0, 1)), Rational(1, 25));
+        assert_eq!(encoder_time_base_from_fps(Rational(25, 0)), Rational(1, 25));
+    }
 }

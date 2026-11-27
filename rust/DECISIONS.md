@@ -118,4 +118,14 @@ Context: 部署容器使用 NVIDIA 4090（`runtime: nvidia`），但旧实现只
 
 Decision: 默认按 h264_nvenc/hevc_nvenc → h264_ascend/hevc_ascend → h264_qsv/hevc_qsv → libx264/libx265 的顺序尝试。每个候选都完整配置并调用 avcodec_open2，失败时记录原因并继续；只有软件候选也失败才返回错误。VAAPI 需要显式创建硬件帧上下文，暂不列入自动候选。
 
-Consequences: 有可用硬件时默认硬编；无硬件/驱动时自动回退软件并打印原因，不静默降级。NVENC/Ascend/QSV 的成功编码路径仍需在对应真实设备上复测。
+Consequences: 有可用硬件时默认硬编；无硬件/驱动时自动回退软件并打印原因，不静默降级。NVENC 已在当前容器实测；Ascend/QSV 的成功编码路径仍需在对应真实设备上复测。
+
+## ADR-012：RTSP PTS 使用帧率倒数时间基，写头后刷新输出时间基
+
+Status: accepted (2026-11-27)
+
+Context: Rust 移植把 `encoder.time_base` 设成了 `{fps_num, fps_den}`（如 20/1），而 C++ 是 `{fps_den, fps_num}`（1/20）。此外 RTSP/RTP muxer 在 `avformat_write_header` 时会把输出流时间基改成 1/90000，而代码在写头前缓存了输出时间基。两处叠加后，每帧 PTS 只前进 1 个 tick，实际间隔约 11 微秒；播放器报 `No video PTS`、POC 参考帧缺失并大量丢帧。
+
+Decision: 编码器时间基固定为帧率的倒数；写头后重新读取 `AVStream.time_base`，再用 `av_packet_rescale_ts(encoder_time_base, output_time_base)`。E2E 增加 RTSP `pts_time` 间隔断言。
+
+Consequences: 20fps 流的 PTS 间隔应为 0.05s（90000 时间基下 4500 tick）；H.264/H.265 E2E 均验证通过。mpv 对 HEVC 仍可能打印 `No video PTS`，该现象用 FFmpeg CLI 直接推流到 MediaMTX 也能复现，属于播放器/服务端组合问题，不是推流端时间基回归。

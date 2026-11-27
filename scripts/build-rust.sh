@@ -9,13 +9,11 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-if ! command -v cargo >/dev/null 2>&1; then
-    export PATH="$HOME/.cargo/bin:$PATH"
-fi
-if ! command -v cargo >/dev/null 2>&1; then
-    echo "找不到 cargo；请安装 Rust 或把 ~/.cargo/bin 加入 PATH" >&2
-    exit 1
-fi
+# shellcheck source=scripts/repo-user.sh
+source "$ROOT/scripts/repo-user.sh"
+
+# shellcheck source=scripts/rust-env.sh
+source "$ROOT/scripts/rust-env.sh"
 
 # shellcheck source=scripts/ffmpeg-env.sh
 source "$ROOT/scripts/ffmpeg-env.sh"

@@ -70,6 +70,31 @@ probe_codec() {
         -show_entries stream=codec_name,width,height,avg_frame_rate -of default=nw=1 "$1"
 }
 
+check_packet_timing() {
+    local url=$1 expected=$2 out=$3
+    ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+        -show_entries packet=pts_time -of csv=p=0 \
+        -read_intervals "%+#8" "$url" >"$out" 2>/dev/null || return 1
+    python3 - "$out" "$expected" <<'PY'
+import sys
+
+path, expected = sys.argv[1], float(sys.argv[2])
+times = []
+for line in open(path):
+    value = line.strip()
+    if value and value != "N/A":
+        times.append(float(value))
+
+deltas = [round(b - a, 6) for a, b in zip(times, times[1:])]
+if len(deltas) < 3:
+    raise SystemExit(f"not enough PTS samples: {times}")
+bad = [d for d in deltas if abs(d - expected) > 0.005]
+if bad:
+    raise SystemExit(f"bad PTS deltas {bad}, expected {expected}s; samples={times}")
+print(f"PTS deltas OK: {deltas[:4]}")
+PY
+}
+
 start_pusher() {
     local log=$1
     shift
@@ -104,6 +129,8 @@ test_stream() {
         CURRENT_PID=""
         return 1
     }
+    local timing=0
+    check_packet_timing "$url" 0.04 "$OUT_DIR/${name}.pts" || timing=1
     local rc=0
     stop_pusher "$CURRENT_PID" || rc=$?
     CURRENT_PID=""
@@ -112,6 +139,7 @@ test_stream() {
         echo "  $codec 退出码=$rc" >&2
         return 1
     }
+    [ "$timing" -eq 0 ] || return 1
     grep -q "codec_name=$expected" "$OUT_DIR/${name}.probe" &&
         grep -q "width=640" "$OUT_DIR/${name}.probe" &&
         grep -q "height=360" "$OUT_DIR/${name}.probe" &&

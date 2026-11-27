@@ -19,6 +19,7 @@
 
 - Rust 1.85+（clap 4.6 的最低要求，本项目在 1.100 上验证）
 - FFmpeg 6.1 开发库：`libavcodec` / `libavformat` / `libavfilter` / `libavutil` / `libswscale` / `libswresample`
+- 构建时需要 libclang（ffmpeg-sys-next 的 bindgen 依赖）；Ubuntu 可执行 `apt install -y libclang-dev`
 - H.265 软件编码需要 FFmpeg 启用 `libx265`；硬件编码需要 FFmpeg 编译对应编码器并具备可用驱动/设备（如 NVIDIA NVENC、Ascend、Intel QSV）
 
 Ubuntu 24.04 安装 FFmpeg 6.1 开发库：
@@ -45,7 +46,15 @@ bash build.sh
 
 生成的可执行文件为 `./rtsp_pusher`。
 
-`build.sh` 会调用 `scripts/ffmpeg-env.sh`，按以下顺序寻找 FFmpeg 6.1 头文件：`pkg-config` → `FFMPEG_INCLUDE_DIR` → 官方 FFmpeg 仓库源码（`.ffmpeg-src/`，自动 clone `n6.1.1` 并 configure）；并在 `.ffmpeg-sysroot/` 生成构建用 sysroot（头文件指向上述来源；库优先 `FFMPEG_LIB_DIR`，否则用系统 FFmpeg 6.1 运行库）。
+构建脚本会自动定位 Rust 工具链：优先使用当前 `CARGO_HOME`，否则查找 `$HOME/.cargo`、`/home/*/.cargo` 和 `/usr/local/cargo`，并匹配对应的 `RUSTUP_HOME`。因此在 `rtsp_pusher` 容器内以 root 执行时，也能复用 `/home` 下挂载的 Rust 工具链。
+
+在容器内以 root 构建时，脚本会切换到仓库所有者 UID 执行，避免 `rust/target`、`.ffmpeg-sysroot` 和最终二进制变成 root 所有。容器内还需要安装 libclang：
+
+```bash
+apt install -y libclang-dev
+```
+
+`build.sh` 会调用 `scripts/ffmpeg-env.sh`，按以下顺序寻找 FFmpeg 6.1 头文件：`pkg-config` → `FFMPEG_INCLUDE_DIR` → 官方 FFmpeg 仓库源码（`.ffmpeg-src/`，自动 clone `n6.1.1` 并 configure）；并在 `.ffmpeg-sysroot/` 生成构建用 sysroot（头文件指向上述来源；库优先 `FFMPEG_LIB_DIR`，容器内自动使用 `/app/ffmpeg/lib`，否则用系统 FFmpeg 6.1 运行库）。
 
 二进制动态链接 FFmpeg 6.1 运行库（`libavcodec.so.60` 等）。宿主机使用系统 FFmpeg 6.1；容器运行时由 `/app/ffmpeg` 提供 6.1 运行库（见 `docker-compose.yml`）。
 
@@ -69,6 +78,8 @@ rtsp_pusher/
 ├── scripts/
 │   ├── build-rust.sh        # cargo 构建 + 复制二进制
 │   ├── ffmpeg-env.sh        # FFmpeg 6.1 探测 / sysroot
+│   ├── rust-env.sh          # 定位 cargo/rustup
+│   ├── repo-user.sh         # root 构建时切换仓库所有者
 │   ├── test-rust.sh         # fmt / clippy / cargo test
 │   ├── e2e.sh               # 端到端验证
 │   └── record-reference.sh  # 录制 C++ 基线

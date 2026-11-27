@@ -76,6 +76,9 @@ mkdir -p "$SYSROOT/lib"
 ln -s "$include_dir" "$SYSROOT/include"
 
 lib_dir="${FFMPEG_LIB_DIR:-}"
+if [ -z "$lib_dir" ] && [ -d /app/ffmpeg/lib ]; then
+    lib_dir=/app/ffmpeg/lib
+fi
 
 link_lib() {
     local name=$1
@@ -108,6 +111,10 @@ if [ -z "${LIBCLANG_PATH:-}" ] && ! ldconfig -p 2>/dev/null | grep 'libclang\.so
             break
         fi
     done
+fi
+if [ -z "${LIBCLANG_PATH:-}" ] && ! ldconfig -p 2>/dev/null | grep 'libclang\.so' >/dev/null; then
+    echo "缺少 libclang（bindgen 需要）。Ubuntu 可执行: apt install -y libclang-dev" >&2
+    exit 1
 fi
 
 export FFMPEG_DIR="$SYSROOT"

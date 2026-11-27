@@ -26,6 +26,14 @@ bash build.sh
 `build.sh` 会运行 `scripts/ffmpeg-env.sh`，必要时生成 `.ffmpeg-sysroot`（gitignore），然后
 `cargo build --release` 并把二进制复制到根目录。
 
+容器内以 root 执行时，`scripts/repo-user.sh` 会切换到仓库所有者 UID，避免产物变成 root 所有；
+`scripts/rust-env.sh` 会从 `/home/*/.cargo` 和 `/home/*/.rustup` 复用挂载的 Rust 工具链。
+容器内缺少 libclang 时先安装：
+
+```bash
+apt install -y libclang-dev
+```
+
 ## 验证命令
 
 ```bash
@@ -36,9 +44,9 @@ bash scripts/record-reference.sh   # 需 rtsp_pusher 容器 + mediamtx
 
 ## 实测结果（2026-11-26 至 2026-11-27）
 
-- `cargo test`：22 个单元测试 + 5 个 CLI 集成测试全部通过。
+- `cargo test`：24 个单元测试 + 5 个 CLI 集成测试全部通过。
 - `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`：通过。
-- `scripts/e2e.sh`：8/8 通过。
+- `scripts/e2e.sh`：8/8 通过；H.264/H.265 均新增 RTSP PTS 间隔断言（25fps 下 0.04s）。
   - H.264：`codec_name=h264, width=640, height=360, avg_frame_rate=25/1`，SIGTERM 退出 0，多轮循环。
   - H.265：`codec_name=hevc`，同上尺寸/帧率。
   - UDP 传输：同样通过（`-t udp`，`ffprobe -rtsp_transport udp`）。
@@ -51,7 +59,8 @@ bash scripts/record-reference.sh   # 需 rtsp_pusher 容器 + mediamtx
   - 水印 16 背景 bbox 均为 `(482,8)-(631,29)`；255 字形 bbox 起点均为 `(488,12)`，末端因捕获时刻的秒数不同而相差 1–2 像素。
   - C++ 日志/退出码见 `rust/app-cases/reference/`。
 - 实时模式：默认节奏 ≈25fps（实测 25.0–25.9），`--low-latency -b 4000` 正常出流。
-- 硬件优先选择（2026-11-27）：本机无可用 NVENC/QSV，启动时依次尝试并回退 libx264；日志含“硬件编码器 ... 不可用”和“回退到软件编码器”。真实 NVENC/Ascend/QSV 成功路径未验证。
+- 硬件优先选择（2026-11-27）：默认 Docker 容器 `runtime: nvidia` 下 `h264_nvenc`/`hevc_nvenc` 已实测；无 GPU 环境下依次尝试并回退 libx264 的路径也已验证；Ascend/QSV 未验证。
+- 时间基/PTS 修复（2026-11-27）：编码器时间基改为 `1/fps`，并在 RTSP 写头后重新读取 1/90000 输出时间基。20fps 流 `ffprobe` 的 `pts_time` 间隔从约 0.000011s 恢复为 0.05s；`scripts/e2e.sh` 已加回归断言。详见 ADR-012。
 - 吞吐（`--no-realtime`，仅记录不作为门禁，受机器负载影响）：C++ H.264 ≈1960fps、H.265 ≈386fps；Rust H.264 约 800–2100fps、H.265 约 230–255fps。实时 25fps 均不受影响。
 
 ## 复现参考基线
@@ -65,7 +74,8 @@ docker exec rtsp_pusher bash -lc \
 
 ## 残余风险
 
-- **硬件编码器**：默认优先选择已接入；NVENC/Ascend/QSV 的成功编码路径未在真实设备验证，当前只验证了失败回退。私有选项按编码器族区分，Ascend 使用 gop/rc_mode/max_bit_rate/frame_rate，NVENC/QSV 使用通用字段。
+- **mpv + HEVC + MediaMTX**：mpv 0.37 播放本机 MediaMTX 的 HEVC 流时仍可能打印 `Could not find ref with POC`、`No video PTS`；用 FFmpeg CLI 直接推同样的流也能复现，H.264 则正常。播放 H.265 可用 `mpv --no-correct-pts ...`，或改用 H.264。
+- **硬件编码器**：默认优先选择已接入；NVENC 在容器内已实测可用，Ascend/QSV 的成功路径未在真实设备验证。私有选项按编码器族区分，Ascend 使用 gop/rc_mode/max_bit_rate/frame_rate，NVENC/QSV 使用通用字段。
 - **FFmpeg 版本**：目标 6.1；只有 4.4 运行库的环境不能直接运行新二进制（容器通过 `/app/ffmpeg/lib` 提供 6.1）。
 - **写流失败语义**：保持 C++ 的“记录后继续、退出 0”，与旧 README 的笼统描述不同；README 已修正。
 - **性能**：Rust H.265 软编吞吐低于 C++（约 60%），但实时 25fps 有充足余量；如追求吞吐可再 profile 滤镜/包处理路径。

@@ -11,6 +11,7 @@
 - 输入探测参数保持 `max_analyze_duration=5s`、`probesize=20MB`。
 - 只设置 FFmpeg 6.1 支持的 RTSP `timeout=5000000`，不要重新引入 `stimeout`。
 - 编码器私有选项必须随 `avcodec_open2` 的 dictionary 传入；不要用 open 前的 `av_opt_set`。
+- 编码器 `time_base` 必须是帧率的倒数（`{fps_den, fps_num}`），不能直接写成 `{fps_num, fps_den}`；RTSP 写头后必须重新读取输出流的 `time_base`，再执行 `av_packet_rescale_ts`。
 - 滤镜图必须显式 `output("in", 0)` / `input("out", 0)` 连接端点。
 - 不修改录制结果/参考日志来迁就实现；发现差异先修实现或记录到 DECISIONS。
 - 不删除 `videos/`、`.agents/` 等用户未跟踪内容；不提交除非用户明确要求。

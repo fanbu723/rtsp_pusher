@@ -3,9 +3,12 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-if ! command -v cargo >/dev/null 2>&1; then
-    export PATH="$HOME/.cargo/bin:$PATH"
-fi
+
+# shellcheck source=scripts/repo-user.sh
+source "$ROOT/scripts/repo-user.sh"
+
+# shellcheck source=scripts/rust-env.sh
+source "$ROOT/scripts/rust-env.sh"
 
 # shellcheck source=scripts/ffmpeg-env.sh
 source "$ROOT/scripts/ffmpeg-env.sh"
